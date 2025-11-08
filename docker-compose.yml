@@ -1,0 +1,10 @@
+# Placeholder docker-compose.yml
+# Define services: zookeeper, kafka, spark, postgres, api, streamlit, etc.
+# Replace with your actual compose configuration when ready.
+version: '3.8'
+services:
+  # Example services to fill out later
+  api:
+    build: ./services/fraud-detection-api
+    ports:
+      - "8000:8000"

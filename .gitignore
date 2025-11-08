@@ -1,0 +1,81 @@
+# --- Secrets & Environment Variables ---
+# TUYỆT ĐỐI KHÔNG COMMIT CÁC FILE NÀY! Chúng chứa thông tin nhạy cảm.
+.env
+.env.*
+secrets.yml
+
+# --- Python Artifacts ---
+# Bỏ qua các thư mục cache, bytecode, và virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.python-version
+
+# Thư mục virtual environment
+venv/
+env/
+.venv/
+.env/
+ENV/
+.tox/
+.nox/
+
+# Bỏ qua các file cài đặt và build package
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+*.whl
+
+# --- Jupyter Notebook ---
+# Bỏ qua các checkpoint được tạo tự động
+.ipynb_checkpoints
+
+# --- MLflow ---
+# Bỏ qua các thư mục chứa kết quả chạy thử nghiệm cục bộ
+mlruns/
+.mlflow-props
+
+# --- Airflow ---
+# Bỏ qua database và log mặc định của Airflow khi chạy cục bộ
+airflow.db
+airflow.cfg
+unittests.cfg
+logs/
+
+# --- IDE / Editor Configuration ---
+# Cấu hình riêng của từng editor, tránh xung đột giữa các thành viên
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# --- Data & Log Files ---
+# Bỏ qua các file log chung và dữ liệu được sinh ra bởi các job
+# LƯU Ý: creditcard.csv được giữ lại vì là dữ liệu mẫu của đề tài.
+# Trong dự án thực tế, các file dữ liệu lớn không nên được commit.
+# Bỏ qua toàn bộ thư mục data
+data/
+*.log
+*.log.*
+*.parquet
+*.delta
+*.avro
+*.csv.gz
+
+# --- Operating System Files ---
+# Files rác của các hệ điều hành khác nhau
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+*~
+
+# --- Docker ---
+# Bỏ qua các file build context không cần thiết (nếu có)
+.dockerignore
