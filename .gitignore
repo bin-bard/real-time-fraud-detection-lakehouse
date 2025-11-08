@@ -57,7 +57,9 @@ logs/
 # LƯU Ý: creditcard.csv được giữ lại vì là dữ liệu mẫu của đề tài.
 # Trong dự án thực tế, các file dữ liệu lớn không nên được commit.
 # Bỏ qua toàn bộ thư mục data
-data/
+# Giữ thư mục data trong repo nhưng bỏ qua tất cả file và thư mục con
+data/*
+!data/.gitkeep
 *.log
 *.log.*
 *.parquet
