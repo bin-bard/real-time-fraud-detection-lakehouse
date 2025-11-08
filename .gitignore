@@ -1,7 +1,7 @@
 # --- Secrets & Environment Variables ---
 # TUYỆT ĐỐI KHÔNG COMMIT CÁC FILE NÀY! Chúng chứa thông tin nhạy cảm.
-#.env
-#.env.*
+.env
+.env.*
 secrets.yml
 
 # --- Python Artifacts ---
