@@ -1,24 +1,37 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import from_json, col
+from pyspark.sql.functions import from_json, col, current_timestamp, year, month, dayofmonth
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType
 
 # Cấu hình Kafka
 KAFKA_BROKER = "kafka:9092"
 KAFKA_TOPIC = "credit_card_transactions"
 
-# Khởi tạo Spark Session
-spark = SparkSession \
-    .builder \
+# MinIO S3 paths
+BRONZE_PATH = "s3a://lakehouse/bronze/transactions"
+SILVER_PATH = "s3a://lakehouse/silver/transactions"
+
+# Khởi tạo Spark Session với Delta Lake (không dùng configure_spark_with_delta_pip)
+spark = SparkSession.builder \
     .appName("RealTimeFraudDetection") \
-    .config("spark.jars.packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0") \
+    .config("spark.jars.packages", 
+             "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0," +
+             "io.delta:delta-core_2.12:2.4.0," +
+             "org.apache.hadoop:hadoop-aws:3.3.4") \
+    .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
+    .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
+    .config("spark.hadoop.fs.s3a.endpoint", "http://minio:9000") \
+    .config("spark.hadoop.fs.s3a.access.key", "minio") \
+    .config("spark.hadoop.fs.s3a.secret.key", "minio123") \
+    .config("spark.hadoop.fs.s3a.path.style.access", "true") \
+    .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
+    .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false") \
     .getOrCreate()
 
 spark.sparkContext.setLogLevel("WARN")
 
-print("Spark Session created successfully.")
+print("✅ Spark Session with Delta Lake created successfully.")
 
-# Định nghĩa Schema cho dữ liệu JSON từ Kafka
-# Dựa trên các cột của file creditcard.csv
+# Schema cho dữ liệu từ Kafka
 schema = StructType([
     StructField("Time", DoubleType(), True),
     StructField("V1", DoubleType(), True),
@@ -53,30 +66,42 @@ schema = StructType([
     StructField("Class", DoubleType(), True)
 ])
 
-
-# Đọc dữ liệu từ Kafka topic
+# Đọc dữ liệu từ Kafka
 kafka_stream_df = spark \
     .readStream \
     .format("kafka") \
     .option("kafka.bootstrap.servers", KAFKA_BROKER) \
     .option("subscribe", KAFKA_TOPIC) \
-    .option("startingOffsets", "earliest") \
+    .option("startingOffsets", "latest") \
     .load()
 
-print("Reading from Kafka stream...")
-
-# Chuyển đổi dữ liệu từ dạng binary sang JSON string, sau đó parse JSON
+# Parse JSON và thêm metadata
 transaction_df = kafka_stream_df.selectExpr("CAST(value AS STRING)") \
     .select(from_json(col("value"), schema).alias("data")) \
-    .select("data.*")
+    .select("data.*") \
+    .withColumn("ingestion_time", current_timestamp()) \
+    .withColumn("year", year(col("ingestion_time"))) \
+    .withColumn("month", month(col("ingestion_time"))) \
+    .withColumn("day", dayofmonth(col("ingestion_time")))
 
-# In kết quả ra console để kiểm tra
-query = transaction_df \
+# Hàm để ghi vào Bronze layer (Raw data)
+def write_to_bronze(df, batch_id):
+    print(f"Writing batch {batch_id} to Bronze layer...")
+    df.write \
+        .format("delta") \
+        .mode("append") \
+        .option("path", BRONZE_PATH) \
+        .partitionBy("year", "month", "day") \
+        .save()
+    print(f"Batch {batch_id} written to Bronze successfully.")
+
+# Ghi stream vào Bronze layer
+bronze_query = transaction_df \
     .writeStream \
+    .foreachBatch(write_to_bronze) \
     .outputMode("append") \
-    .format("console") \
-    .option("truncate", "false") \
+    .option("checkpointLocation", "s3a://lakehouse/checkpoints/bronze") \
     .start()
 
-print("Streaming to console started. Waiting for termination...")
-query.awaitTermination()
+print("Bronze layer streaming started. Writing to MinIO...")
+bronze_query.awaitTermination()
