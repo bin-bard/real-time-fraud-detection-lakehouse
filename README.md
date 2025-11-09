@@ -104,6 +104,7 @@ docker-compose --profile setup run --rm minio-setup
 ```
 
 **Kết quả mong đợi:**
+
 ```
 🔧 MinIO Data Lakehouse Setup Script
 ✅ MinIO is ready!
@@ -125,12 +126,12 @@ docker ps
 
 ### 4. Truy cập các dịch vụ
 
-| Service              | URL                     | Username | Password |
-| -------------------- | ----------------------- | -------- | -------- |
-| **Spark Master UI**  | http://localhost:8080   | -        | -        |
-| **MinIO Console**    | http://localhost:9001   | minio    | minio123 |
-| **Kafka**            | localhost:9092          | -        | -        |
-| **Hive Metastore**   | thrift://localhost:9083 | -        | -        |
+| Service             | URL                     | Username | Password |
+| ------------------- | ----------------------- | -------- | -------- |
+| **Spark Master UI** | http://localhost:8080   | -        | -        |
+| **MinIO Console**   | http://localhost:9001   | minio    | minio123 |
+| **Kafka**           | localhost:9092          | -        | -        |
+| **Hive Metastore**  | thrift://localhost:9083 | -        | -        |
 
 ### 5. Chạy Spark Streaming Job
 
@@ -156,6 +157,7 @@ docker exec -it spark-master bash
 ```
 
 **Kết quả mong đợi:**
+
 ```
 ✅ Spark Session with Delta Lake created successfully.
 Bronze layer streaming started. Writing to MinIO...
@@ -181,6 +183,7 @@ kafka-console-consumer --bootstrap-server localhost:9092 --topic credit_card_tra
 #### Kiểm tra Delta Lake data trong MinIO:
 
 1. **Truy cập MinIO Console**: http://localhost:9001
+
    - Username: `minio`
    - Password: `minio123`
 
@@ -207,6 +210,7 @@ docker logs spark-master
 #### Lỗi thường gặp:
 
 **1. Hive Metastore schema error:**
+
 ```bash
 # Reset volumes và restart
 docker-compose down -v
@@ -215,10 +219,12 @@ docker-compose --profile setup run --rm minio-setup
 ```
 
 **2. Spark-Delta Lake compatibility error:**
+
 - Đảm bảo sử dụng Spark 3.4.1 với Delta Lake 2.4.0
 - Version packages trong spark-submit phải match
 
 **3. MinIO bucket not found:**
+
 ```bash
 # Chạy lại setup
 docker-compose --profile setup run --rm minio-setup
