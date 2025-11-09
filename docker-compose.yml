@@ -127,6 +127,50 @@ services:
     networks:
       - data_network
 
+  # MLflow - Machine Learning Lifecycle Management
+  mlflow:
+    image: python:3.9-slim
+    container_name: mlflow
+    ports:
+      - "5000:5000"
+    environment:
+      - MLFLOW_BACKEND_STORE_URI=postgresql://mlflow:mlflow@mlflow-db:5432/mlflow
+      - MLFLOW_DEFAULT_ARTIFACT_ROOT=s3://lakehouse/models/
+      - AWS_ACCESS_KEY_ID=minio
+      - AWS_SECRET_ACCESS_KEY=minio123
+      - MLFLOW_S3_ENDPOINT_URL=http://minio:9000
+    volumes:
+      - ./services/mlflow:/app
+    working_dir: /app
+    command: >
+      bash -c "
+        pip install mlflow boto3 psycopg2-binary &&
+        mlflow server 
+        --backend-store-uri postgresql://mlflow:mlflow@mlflow-db:5432/mlflow
+        --default-artifact-root s3://lakehouse/models/
+        --host 0.0.0.0
+        --port 5000
+        --workers 1
+      "
+    depends_on:
+      - mlflow-db
+      - minio
+    networks:
+      - data_network
+
+  # PostgreSQL for MLflow
+  mlflow-db:
+    image: postgres:13
+    container_name: mlflow-db
+    environment:
+      POSTGRES_DB: mlflow
+      POSTGRES_USER: mlflow
+      POSTGRES_PASSWORD: mlflow
+    volumes:
+      - mlflow_db:/var/lib/postgresql/data
+    networks:
+      - data_network
+
   # MinIO Setup Service (chạy 1 lần để setup buckets)
   minio-setup:
     build:
@@ -142,6 +186,7 @@ services:
 volumes:
   minio_data:
   metastore_db:
+  mlflow_db:
 
 networks:
   data_network:
