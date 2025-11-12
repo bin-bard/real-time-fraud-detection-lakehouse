@@ -9,10 +9,16 @@ import mlflow.spark
 import logging
 import os
 
-# MLflow configuration - temporarily disabled for testing
-# mlflow.set_tracking_uri("http://mlflow:5000")
-# mlflow.set_experiment("fraud_detection")
-print("⚠️ MLflow tracking is temporarily disabled for testing")
+# Configure MLflow S3 artifact storage
+os.environ["AWS_ACCESS_KEY_ID"] = "minio"
+os.environ["AWS_SECRET_ACCESS_KEY"] = "minio123"
+os.environ["MLFLOW_S3_ENDPOINT_URL"] = "http://minio:9000"
+
+# MLflow configuration
+mlflow.set_tracking_uri("http://mlflow:5000")
+mlflow.set_experiment("fraud_detection")
+print("✅ MLflow tracking enabled - connected to http://mlflow:5000")
+print(f"✅ MLflow artifacts will be stored in S3: {os.environ.get('MLFLOW_S3_ENDPOINT_URL')}")
 
 # Cấu hình logging
 logging.basicConfig(level=logging.INFO)
@@ -110,81 +116,81 @@ def train_model(algorithm="random_forest"):
         # Create pipeline
         pipeline = Pipeline(stages=[assembler, scaler, classifier])
         
-        # Start MLflow run - temporarily disabled
-        # with mlflow.start_run(run_name=f"fraud_detection_{algorithm}"):
-        
-        # Log parameters - temporarily disabled  
-        # if algorithm == "random_forest":
-        #     mlflow.log_param("num_trees", 100)
-        #     mlflow.log_param("max_depth", 10)
-        # else:
-        #     mlflow.log_param("max_iter", 100)
-        #     mlflow.log_param("reg_param", 0.01)
-        #     
-        # mlflow.log_param("algorithm", algorithm)
-        # mlflow.log_param("train_samples", train_df.count())
-        # mlflow.log_param("test_samples", test_df.count())
-        
-        # Train model
-        logger.info("Training model...")
-        model = pipeline.fit(train_df)
-        
-        # Make predictions
-        logger.info("Making predictions...")
-        predictions = model.transform(test_df)
-        
-        # Evaluate model
-        logger.info("Evaluating model...")
-        
-        # Binary classification metrics
-        binary_evaluator = BinaryClassificationEvaluator(
-            labelCol="label",
-            rawPredictionCol="rawPrediction",
-            metricName="areaUnderROC"
-        )
-        auc = binary_evaluator.evaluate(predictions)
-        
-        # Precision and Recall
-        multiclass_evaluator = MulticlassClassificationEvaluator(
-            labelCol="label",
-            predictionCol="prediction"
-        )
-        
-        accuracy = multiclass_evaluator.evaluate(predictions, {multiclass_evaluator.metricName: "accuracy"})
-        precision = multiclass_evaluator.evaluate(predictions, {multiclass_evaluator.metricName: "weightedPrecision"})
-        recall = multiclass_evaluator.evaluate(predictions, {multiclass_evaluator.metricName: "weightedRecall"})
-        f1 = multiclass_evaluator.evaluate(predictions, {multiclass_evaluator.metricName: "f1"})
-        
-        # Log metrics - temporarily disabled
-        # mlflow.log_metric("auc", auc)
-        # mlflow.log_metric("accuracy", accuracy)
-        # mlflow.log_metric("precision", precision)
-        # mlflow.log_metric("recall", recall)
-        # mlflow.log_metric("f1_score", f1)
-        
-        # Log model - temporarily disabled
-        # mlflow.spark.log_model(
-        #     model,
-        #     "fraud_detection_model",
-        #     registered_model_name=f"fraud_detection_{algorithm}"
-        # )
-        
-        logger.info("📊 Model Performance:")
-        logger.info(f"   AUC: {auc:.4f}")
-        logger.info(f"   Accuracy: {accuracy:.4f}")
-        logger.info(f"   Precision: {precision:.4f}")
-        logger.info(f"   Recall: {recall:.4f}")
-        logger.info(f"   F1-Score: {f1:.4f}")
-        
-        # Tính fraud detection specific metrics
-        fraud_predictions = predictions.filter(col("label") == 1)
-        total_fraud = fraud_predictions.count()
-        detected_fraud = fraud_predictions.filter(col("prediction") == 1).count()
-        
-        if total_fraud > 0:
-            fraud_detection_rate = detected_fraud / total_fraud
-            # mlflow.log_metric("fraud_detection_rate", fraud_detection_rate) # temporarily disabled
-            logger.info(f"   Fraud Detection Rate: {fraud_detection_rate:.4f}")
+        # Start MLflow run
+        with mlflow.start_run(run_name=f"fraud_detection_{algorithm}"):
+            
+            # Log parameters
+            if algorithm == "random_forest":
+                mlflow.log_param("num_trees", 100)
+                mlflow.log_param("max_depth", 10)
+            else:
+                mlflow.log_param("max_iter", 100)
+                mlflow.log_param("reg_param", 0.01)
+                
+            mlflow.log_param("algorithm", algorithm)
+            mlflow.log_param("train_samples", train_df.count())
+            mlflow.log_param("test_samples", test_df.count())
+            
+            # Train model
+            logger.info("Training model...")
+            model = pipeline.fit(train_df)
+            
+            # Make predictions
+            logger.info("Making predictions...")
+            predictions = model.transform(test_df)
+            
+            # Evaluate model
+            logger.info("Evaluating model...")
+            
+            # Binary classification metrics
+            binary_evaluator = BinaryClassificationEvaluator(
+                labelCol="label",
+                rawPredictionCol="rawPrediction",
+                metricName="areaUnderROC"
+            )
+            auc = binary_evaluator.evaluate(predictions)
+            
+            # Precision and Recall
+            multiclass_evaluator = MulticlassClassificationEvaluator(
+                labelCol="label",
+                predictionCol="prediction"
+            )
+            
+            accuracy = multiclass_evaluator.evaluate(predictions, {multiclass_evaluator.metricName: "accuracy"})
+            precision = multiclass_evaluator.evaluate(predictions, {multiclass_evaluator.metricName: "weightedPrecision"})
+            recall = multiclass_evaluator.evaluate(predictions, {multiclass_evaluator.metricName: "weightedRecall"})
+            f1 = multiclass_evaluator.evaluate(predictions, {multiclass_evaluator.metricName: "f1"})
+            
+            # Log metrics
+            mlflow.log_metric("auc", auc)
+            mlflow.log_metric("accuracy", accuracy)
+            mlflow.log_metric("precision", precision)
+            mlflow.log_metric("recall", recall)
+            mlflow.log_metric("f1_score", f1)
+            
+            # Log model
+            mlflow.spark.log_model(
+                model,
+                "fraud_detection_model",
+                registered_model_name=f"fraud_detection_{algorithm}"
+            )
+            
+            logger.info("📊 Model Performance:")
+            logger.info(f"   AUC: {auc:.4f}")
+            logger.info(f"   Accuracy: {accuracy:.4f}")
+            logger.info(f"   Precision: {precision:.4f}")
+            logger.info(f"   Recall: {recall:.4f}")
+            logger.info(f"   F1-Score: {f1:.4f}")
+            
+            # Tính fraud detection specific metrics
+            fraud_predictions = predictions.filter(col("label") == 1)
+            total_fraud = fraud_predictions.count()
+            detected_fraud = fraud_predictions.filter(col("prediction") == 1).count()
+            
+            if total_fraud > 0:
+                fraud_detection_rate = detected_fraud / total_fraud
+                mlflow.log_metric("fraud_detection_rate", fraud_detection_rate)
+                logger.info(f"   Fraud Detection Rate: {fraud_detection_rate:.4f}")
         
         return True
         
