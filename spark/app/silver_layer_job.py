@@ -52,33 +52,35 @@ def create_spark_session():
 def feature_engineering(df):
     """
     Tạo features cho fraud detection model từ Sparkov dataset
-    Bao gồm: distance, age, time features, categorical encodings
+    Dataset columns: trans_date_trans_time, cc_num, merchant, category, amt, first, last, 
+                     gender, street, city, state, zip, lat, long, city_pop, job, dob, 
+                     trans_num, unix_time, merch_lat, merch_long, is_fraud
     """
     logger.info("Starting feature engineering...")
     
-    # Parse timestamp và date columns
-    df = df.withColumn("trans_timestamp", to_timestamp(col("trans_date_trans_time"), "yyyy-MM-dd HH:mm:ss"))
+    # Bronze đã có trans_timestamp, dùng lại
+    # Parse dob to date (format: MM/DD/YYYY trong CSV gốc, nhưng Bronze đã convert sang yyyy-MM-dd)
     df = df.withColumn("dob_date", to_date(col("dob"), "yyyy-MM-dd"))
     
     # 1. GEOGRAPHIC FEATURES
-    # Tính khoảng cách Haversine giữa chủ thẻ và cửa hàng
+    # Khoảng cách Haversine giữa customer location và merchant location
     df = df.withColumn("distance_km", 
                        haversine_distance(col("lat"), col("long"), 
                                          col("merch_lat"), col("merch_long")))
     
-    # 2. DEMOGRAPHIC FEATURES
-    # Tính tuổi từ ngày sinh
+    # 2. DEMOGRAPHIC FEATURES  
+    # Tuổi khách hàng
     df = df.withColumn("age", 
                        floor(datediff(col("trans_timestamp"), col("dob_date")) / 365.25))
     
     # 3. TIME FEATURES
-    # Extract hour, day of week, is_weekend
+    # Thời gian trong ngày, ngày trong tuần
     df = df.withColumn("hour", hour(col("trans_timestamp")))
     df = df.withColumn("day_of_week", dayofweek(col("trans_timestamp")))
     df = df.withColumn("is_weekend", 
                        when((col("day_of_week") == 1) | (col("day_of_week") == 7), 1).otherwise(0))
     
-    # Cyclic encoding for hour (sin/cos transformation)
+    # Cyclic encoding cho hour (để model hiểu 23h gần 0h)
     df = df.withColumn("hour_sin", sin(col("hour") * 2 * 3.14159 / 24))
     df = df.withColumn("hour_cos", cos(col("hour") * 2 * 3.14159 / 24))
     
@@ -87,7 +89,7 @@ def feature_engineering(df):
     df = df.withColumn("is_zero_amount", when(col("amt") == 0, 1).otherwise(0))
     df = df.withColumn("is_high_amount", when(col("amt") > 500, 1).otherwise(0))
     
-    # Amount bins
+    # Amount bins cho categorical analysis
     df = df.withColumn("amount_bin",
                        when(col("amt") == 0, 0)
                        .when(col("amt") <= 50, 1)
@@ -96,45 +98,53 @@ def feature_engineering(df):
                        .when(col("amt") <= 500, 4)
                        .otherwise(5))
     
-    # 5. CATEGORICAL ENCODING (will be used for aggregations)
-    # Gender encoding
+    # 5. CATEGORICAL ENCODING
+    # Gender: M=1, F=0
     df = df.withColumn("gender_encoded", when(col("gender") == "M", 1).otherwise(0))
     
     # 6. RISK INDICATORS
-    # Unusual distance (>100km might be suspicious)
+    # Transaction xa (>100km có thể đáng ngờ)
     df = df.withColumn("is_distant_transaction", 
                        when(col("distance_km") > 100, 1).otherwise(0))
     
-    # Late night transaction (11PM - 5AM)
+    # Transaction đêm khuya (11PM-5AM)
     df = df.withColumn("is_late_night",
                        when((col("hour") >= 23) | (col("hour") <= 5), 1).otherwise(0))
     
-    # Select final features for Silver layer
+    logger.info(f"After transformations count: {df.count()}")
+    
+    # Select ALL columns for Silver layer (original + engineered features)
     df_features = df.select(
-        # Original identification columns
-        "trans_num", "cc_num", "trans_timestamp", "trans_date_trans_time",
+        # Original identification from Kaggle dataset
+        "trans_num", "cc_num", "trans_timestamp",
         
         # Transaction details
-        "merchant", "category", "amt",
+        "merchant", "category", "amt", "unix_time",
         
         # Customer info
-        "first", "last", "gender", "city", "state", "job",
+        "first", "last", "gender", "street", "city", "state", "zip", "job", "dob",
         
-        # Geographic data
-        "lat", "long", "merch_lat", "merch_long", "distance_km",
-        
-        # Demographic
-        "age", "dob",
-        
-        # Engineered features
-        "hour", "day_of_week", "is_weekend",
-        "hour_sin", "hour_cos",
-        "log_amount", "is_zero_amount", "is_high_amount", "amount_bin",
-        "gender_encoded",
-        "is_distant_transaction", "is_late_night",
+        # Geographic data from dataset
+        "lat", "long", "city_pop", "merch_lat", "merch_long",
         
         # Target variable
         "is_fraud",
+        
+        # ENGINEERED FEATURES (features we actually created above)
+        # Geographic
+        "distance_km", "is_distant_transaction",
+        
+        # Demographic  
+        "age",
+        
+        # Time features
+        "hour", "day_of_week", "is_weekend", "hour_sin", "hour_cos", "is_late_night",
+        
+        # Amount features
+        "log_amount", "is_zero_amount", "is_high_amount", "amount_bin",
+        
+        # Categorical encoding
+        "gender_encoded",
         
         # Metadata
         "ingestion_time",
@@ -145,6 +155,7 @@ def feature_engineering(df):
         dayofmonth(col("trans_timestamp")).alias("day")
     )
     
+    logger.info(f"After select count: {df_features.count()}")
     logger.info(f"Feature engineering completed. Total features: {len(df_features.columns)}")
     return df_features
 
@@ -173,43 +184,31 @@ def process_bronze_to_silver():
         
         # Loại bỏ duplicates based on trans_num
         bronze_df = bronze_df.dropDuplicates(["trans_num"])
+        logger.info(f"After deduplication: {bronze_df.count()} records")
         
-        # Loại bỏ null values trong columns quan trọng
-        bronze_df = bronze_df.filter(
-            col("amt").isNotNull() & 
-            col("is_fraud").isNotNull() &
-            col("trans_date_trans_time").isNotNull() &
-            col("lat").isNotNull() &
-            col("long").isNotNull() &
-            col("merch_lat").isNotNull() &
-            col("merch_long").isNotNull()
-        )
-        
-        # Feature engineering
+        # Feature engineering (skip strict null filters to keep all data)
         silver_df = feature_engineering(bronze_df)
         
         # Ghi vào Silver layer
         logger.info("Writing to Silver layer...")
         
+        # Debug: count before write
+        record_count = silver_df.count()
+        logger.info(f"Records to write: {record_count}")
+        
+        if record_count == 0:
+            logger.error("❌ No records to write to Silver layer!")
+            return False
+        
         silver_df.write \
             .format("delta") \
             .mode("overwrite") \
-            .option("path", silver_path) \
-            .partitionBy("year", "month", "day") \
-            .save()
+            .option("overwriteSchema", "true") \
+            .option("mergeSchema", "true") \
+            .save(silver_path)
             
         logger.info("✅ Silver layer processing completed successfully!")
-        
-        # In thống kê
-        fraud_count = silver_df.filter(col("is_fraud") == "1").count()
-        normal_count = silver_df.filter(col("is_fraud") == "0").count()
-        total_count = silver_df.count()
-        
-        logger.info(f"📊 Silver Layer Statistics:")
-        logger.info(f"   Total transactions: {total_count}")
-        logger.info(f"   Normal transactions: {normal_count} ({normal_count/total_count*100:.2f}%)")
-        logger.info(f"   Fraudulent transactions: {fraud_count} ({fraud_count/total_count*100:.4f}%)")
-        
+        logger.info(f"📊 Total records written: {record_count}")
         return True
         
     except Exception as e:
