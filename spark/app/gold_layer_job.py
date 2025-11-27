@@ -42,13 +42,15 @@ def create_fraud_summary():
         daily_summary = df.groupBy("year", "month", "day") \
             .agg(
                 count("*").alias("total_transactions"),
-                sum(when(col("Class") == 1, 1).otherwise(0)).alias("fraud_transactions"),
-                sum(when(col("Class") == 0, 1).otherwise(0)).alias("normal_transactions"),
-                avg("Amount").alias("avg_transaction_amount"),
-                max("Amount").alias("max_transaction_amount"),
-                min("Amount").alias("min_transaction_amount"),
-                sum("Amount").alias("total_amount"),
-                sum(when(col("Class") == 1, col("Amount")).otherwise(0)).alias("fraud_amount")
+                sum(when(col("is_fraud") == "1", 1).otherwise(0)).alias("fraud_transactions"),
+                sum(when(col("is_fraud") == "0", 1).otherwise(0)).alias("normal_transactions"),
+                avg("amt").alias("avg_transaction_amount"),
+                max("amt").alias("max_transaction_amount"),
+                min("amt").alias("min_transaction_amount"),
+                sum("amt").alias("total_amount"),
+                sum(when(col("is_fraud") == "1", col("amt")).otherwise(0)).alias("fraud_amount"),
+                avg("distance_km").alias("avg_distance"),
+                max("distance_km").alias("max_distance")
             ) \
             .withColumn("fraud_rate", col("fraud_transactions") / col("total_transactions")) \
             .withColumn("avg_fraud_amount", 
@@ -60,31 +62,53 @@ def create_fraud_summary():
                              lpad(col("day"), 2, "0")))
         
         # Hourly analysis
-        hourly_summary = df.groupBy("year", "month", "day", "hour_of_day") \
+        hourly_summary = df.groupBy("year", "month", "day", "hour") \
             .agg(
                 count("*").alias("total_transactions"),
-                sum(when(col("Class") == 1, 1).otherwise(0)).alias("fraud_transactions"),
-                avg("Amount").alias("avg_amount")
+                sum(when(col("is_fraud") == "1", 1).otherwise(0)).alias("fraud_transactions"),
+                avg("amt").alias("avg_amount"),
+                avg("distance_km").alias("avg_distance")
             ) \
             .withColumn("fraud_rate", col("fraud_transactions") / col("total_transactions"))
         
-        # Amount range analysis
+        # Amount range analysis  
         amount_ranges = df.withColumn(
             "amount_range",
-            when(col("Amount") == 0, "zero")
-            .when(col("Amount") <= 50, "low")
-            .when(col("Amount") <= 500, "medium")
-            .when(col("Amount") <= 1000, "high")
+            when(col("amt") == 0, "zero")
+            .when(col("amt") <= 50, "low")
+            .when(col("amt") <= 250, "medium")
+            .when(col("amt") <= 500, "high")
             .otherwise("very_high")
         )
         
         amount_summary = amount_ranges.groupBy("amount_range") \
             .agg(
                 count("*").alias("total_transactions"),
-                sum(when(col("Class") == 1, 1).otherwise(0)).alias("fraud_transactions"),
-                avg("Amount").alias("avg_amount")
+                sum(when(col("is_fraud") == "1", 1).otherwise(0)).alias("fraud_transactions"),
+                avg("amt").alias("avg_amount")
             ) \
             .withColumn("fraud_rate", col("fraud_transactions") / col("total_transactions"))
+        
+        # Geographic analysis (by state)
+        state_summary = df.groupBy("state") \
+            .agg(
+                count("*").alias("total_transactions"),
+                sum(when(col("is_fraud") == "1", 1).otherwise(0)).alias("fraud_transactions"),
+                avg("amt").alias("avg_amount"),
+                avg("distance_km").alias("avg_distance")
+            ) \
+            .withColumn("fraud_rate", col("fraud_transactions") / col("total_transactions")) \
+            .orderBy(desc("fraud_transactions"))
+        
+        # Category analysis
+        category_summary = df.groupBy("category") \
+            .agg(
+                count("*").alias("total_transactions"),
+                sum(when(col("is_fraud") == "1", 1).otherwise(0)).alias("fraud_transactions"),
+                avg("amt").alias("avg_amount")
+            ) \
+            .withColumn("fraud_rate", col("fraud_transactions") / col("total_transactions")) \
+            .orderBy(desc("fraud_rate"))
         
         # Ghi các bảng tổng hợp
         logger.info("Writing daily summary to Gold layer...")
@@ -110,11 +134,27 @@ def create_fraud_summary():
             .option("path", f"{gold_aggregated_path}/amount_summary") \
             .save()
         
+        logger.info("Writing state summary to Gold layer...")
+        state_summary.write \
+            .format("delta") \
+            .mode("overwrite") \
+            .option("path", f"{gold_aggregated_path}/state_summary") \
+            .save()
+        
+        logger.info("Writing category summary to Gold layer...")
+        category_summary.write \
+            .format("delta") \
+            .mode("overwrite") \
+            .option("path", f"{gold_aggregated_path}/category_summary") \
+            .save()
+        
         # In metrics
         logger.info("📊 Gold Layer Summary Created:")
         logger.info(f"   Daily summary records: {daily_summary.count()}")
         logger.info(f"   Hourly summary records: {hourly_summary.count()}")
         logger.info(f"   Amount range records: {amount_summary.count()}")
+        logger.info(f"   State summary records: {state_summary.count()}")
+        logger.info(f"   Category summary records: {category_summary.count()}")
         
         # Show sample data
         logger.info("📋 Sample Daily Summary:")
@@ -147,8 +187,9 @@ def create_real_time_metrics():
         latest_metrics = df.filter(col("day") == dayofmonth(current_date())) \
             .agg(
                 count("*").alias("total_transactions_today"),
-                sum(when(col("Class") == 1, 1).otherwise(0)).alias("fraud_detected_today"),
-                avg("Amount").alias("avg_amount_today"),
+                sum(when(col("is_fraud") == "1", 1).otherwise(0)).alias("fraud_detected_today"),
+                avg("amt").alias("avg_amount_today"),
+                avg("distance_km").alias("avg_distance_today"),
                 max("ingestion_time").alias("last_update")
             ) \
             .withColumn("fraud_rate_today", col("fraud_detected_today") / col("total_transactions_today")) \
@@ -157,20 +198,21 @@ def create_real_time_metrics():
                        .when(col("fraud_rate_today") > 0.005, "MEDIUM")
                        .otherwise("LOW"))
         
-        # Top fraud patterns - Add amount_range column first
-        fraud_patterns = df.filter(col("Class") == 1) \
+        # Top fraud patterns
+        fraud_patterns = df.filter(col("is_fraud") == "1") \
             .withColumn(
                 "amount_range",
-                when(col("Amount") == 0, "zero")
-                .when(col("Amount") <= 50, "low")
-                .when(col("Amount") <= 500, "medium")
-                .when(col("Amount") <= 1000, "high")
+                when(col("amt") == 0, "zero")
+                .when(col("amt") <= 50, "low")
+                .when(col("amt") <= 250, "medium")
+                .when(col("amt") <= 500, "high")
                 .otherwise("very_high")
             ) \
             .groupBy("amount_range") \
             .agg(
                 count("*").alias("fraud_count"),
-                avg("Amount").alias("avg_fraud_amount")
+                avg("amt").alias("avg_fraud_amount"),
+                avg("distance_km").alias("avg_fraud_distance")
             ) \
             .orderBy(desc("fraud_count"))
         

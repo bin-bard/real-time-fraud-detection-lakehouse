@@ -1,84 +1,138 @@
 import csv
 import json
 import time
-from kafka import KafkaProducer
+import psycopg2
+from psycopg2.extras import execute_values
 import os
+from datetime import datetime
 
 # --- Cấu hình ---
-KAFKA_BROKER = os.environ.get("KAFKA_BROKER", "kafka:9092")
-KAFKA_TOPIC = "credit_card_transactions"
-DATA_FILE = "/data/creditcard.csv"
-# Hệ số co giãn thời gian. Ví dụ: 0.01 nghĩa là 1 giây trong dữ liệu gốc = 0.01 giây trong mô phỏng.
-# Điều này giúp chạy hết bộ dữ liệu 2 ngày trong vài giờ thay vì 2 ngày thật.
-TIME_SCALING_FACTOR = 0.01 
+POSTGRES_HOST = os.environ.get("POSTGRES_HOST", "postgres")
+POSTGRES_PORT = os.environ.get("POSTGRES_PORT", "5432")
+POSTGRES_DB = os.environ.get("POSTGRES_DB", "frauddb")
+POSTGRES_USER = os.environ.get("POSTGRES_USER", "postgres")
+POSTGRES_PASSWORD = os.environ.get("POSTGRES_PASSWORD", "postgres")
 
-# --- Khởi tạo Kafka Producer ---
-producer = None
-while producer is None:
+DATA_FILE = "/data/fraudTrain.csv"
+# Hệ số co giãn thời gian để mô phỏng stream nhanh hơn thực tế
+# 0.001 = giao dịch 1 ngày chạy trong vài phút
+TIME_SCALING_FACTOR = 0.001 
+
+# --- Khởi tạo PostgreSQL Connection ---
+conn = None
+while conn is None:
     try:
-        producer = KafkaProducer(
-            bootstrap_servers=[KAFKA_BROKER],
-            value_serializer=lambda v: json.dumps(v).encode('utf-8')
+        conn = psycopg2.connect(
+            host=POSTGRES_HOST,
+            port=POSTGRES_PORT,
+            database=POSTGRES_DB,
+            user=POSTGRES_USER,
+            password=POSTGRES_PASSWORD
         )
-        print("Kafka Producer connected successfully!")
+        print("✅ PostgreSQL connected successfully!")
     except Exception as e:
-        print(f"Could not connect to Kafka, retrying in 5 seconds... Error: {e}")
+        print(f"Could not connect to PostgreSQL, retrying in 5 seconds... Error: {e}")
         time.sleep(5)
 
 # --- Đọc và gửi dữ liệu theo thời gian ---
 def simulate_real_time_stream():
-    print(f"Simulating real-time stream from {DATA_FILE}...")
+    print(f"🚀 Simulating real-time stream from {DATA_FILE}...")
+    cursor = conn.cursor()
+    
     try:
         with open(DATA_FILE, 'r') as file:
             reader = csv.DictReader(file)
-            last_transaction_time = 0
+            last_transaction_time = None
             
-            # Đọc dòng đầu tiên để khởi tạo thời gian
-            first_row = next(reader)
-            last_transaction_time = float(first_row['Time'])
-            
-            # Xử lý và gửi dòng đầu tiên
-            send_transaction(1, first_row)
-
-            # Xử lý các dòng còn lại
-            for i, row in enumerate(reader, start=2):
-                current_transaction_time = float(row['Time'])
-                
-                # Tính toán thời gian chờ
-                time_diff = current_transaction_time - last_transaction_time
-                wait_time = time_diff * TIME_SCALING_FACTOR
-                
-                if wait_time > 0:
-                    time.sleep(wait_time)
-                
-                # Gửi giao dịch
-                send_transaction(i, row)
-                
-                last_transaction_time = current_transaction_time
+            for i, row in enumerate(reader, start=1):
+                try:
+                    # Parse timestamp
+                    current_time_str = row['trans_date_trans_time']
+                    current_time = datetime.strptime(current_time_str, '%Y-%m-%d %H:%M:%S')
+                    
+                    # Tính thời gian chờ giữa các giao dịch
+                    if last_transaction_time is not None:
+                        time_diff = (current_time - last_transaction_time).total_seconds()
+                        wait_time = time_diff * TIME_SCALING_FACTOR
+                        if wait_time > 0:
+                            time.sleep(wait_time)
+                    
+                    # Gửi giao dịch vào PostgreSQL
+                    send_transaction(cursor, i, row)
+                    
+                    last_transaction_time = current_time
+                    
+                    # Commit mỗi 100 transactions
+                    if i % 100 == 0:
+                        conn.commit()
+                        print(f"📊 Processed {i} transactions...")
+                        
+                except Exception as e:
+                    print(f"⚠️ Error processing row {i}: {e}")
+                    continue
 
     except FileNotFoundError:
-        print(f"Error: Data file not found at {DATA_FILE}.")
+        print(f"❌ Error: Data file not found at {DATA_FILE}.")
     except Exception as e:
-        print(f"An error occurred during simulation: {e}")
+        print(f"❌ An error occurred during simulation: {e}")
     finally:
-        if producer:
-            producer.flush()
-            producer.close()
-            print("Kafka producer closed.")
+        if cursor:
+            conn.commit()
+            cursor.close()
+        if conn:
+            conn.close()
+            print("✅ PostgreSQL connection closed.")
 
-def send_transaction(index, row_data):
-    """Helper function to process and send a single transaction."""
+def send_transaction(cursor, index, row_data):
+    """Helper function to process and send a single transaction to PostgreSQL."""
     try:
-        # Chuyển đổi kiểu dữ liệu
-        processed_row = {key: float(value) for key, value in row_data.items()}
+        # INSERT vào bảng transactions với schema Sparkov
+        insert_query = """
+            INSERT INTO transactions (
+                trans_date_trans_time, cc_num, merchant, category, amt,
+                first, last, gender, street, city, state, zip,
+                lat, long, city_pop, job, dob, trans_num, unix_time,
+                merch_lat, merch_long, is_fraud
+            ) VALUES (
+                %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s
+            )
+        """
         
-        # Gửi message
-        producer.send(KAFKA_TOPIC, value=processed_row)
-        print(f"Sent message #{index} | Time: {processed_row['Time']}")
-    except (ValueError, TypeError):
-        print(f"Skipping row #{index} due to data conversion error.")
+        values = (
+            row_data['trans_date_trans_time'],
+            int(row_data['cc_num']),
+            row_data['merchant'],
+            row_data['category'],
+            float(row_data['amt']),
+            row_data['first'],
+            row_data['last'],
+            row_data['gender'],
+            row_data['street'],
+            row_data['city'],
+            row_data['state'],
+            int(row_data['zip']),
+            float(row_data['lat']),
+            float(row_data['long']),
+            int(row_data['city_pop']),
+            row_data['job'],
+            row_data['dob'],
+            row_data['trans_num'],
+            int(row_data['unix_time']),
+            float(row_data['merch_lat']),
+            float(row_data['merch_long']),
+            int(row_data['is_fraud'])
+        )
+        
+        cursor.execute(insert_query, values)
+        
+        if index % 50 == 0:
+            print(f"✅ Sent transaction #{index} | Time: {row_data['trans_date_trans_time']} | Amount: ${row_data['amt']} | Fraud: {row_data['is_fraud']}")
+            
     except Exception as e:
-        print(f"Error sending message #{index}: {e}")
+        print(f"❌ Error sending transaction #{index}: {e}")
 
 if __name__ == "__main__":
     simulate_real_time_stream()

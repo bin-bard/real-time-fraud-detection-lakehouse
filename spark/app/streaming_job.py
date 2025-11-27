@@ -1,10 +1,10 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import from_json, col, current_timestamp, year, month, dayofmonth
+from pyspark.sql.functions import from_json, col, current_timestamp, year, month, dayofmonth, to_timestamp, get_json_object
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType
 
-# Cấu hình Kafka
+# Cấu hình Kafka - Đọc CDC events từ Debezium
 KAFKA_BROKER = "kafka:9092"
-KAFKA_TOPIC = "credit_card_transactions"
+KAFKA_TOPIC = "postgres.public.transactions"  # Debezium topic pattern
 
 # MinIO S3 paths
 BRONZE_PATH = "s3a://lakehouse/bronze/transactions"
@@ -31,42 +31,34 @@ spark.sparkContext.setLogLevel("WARN")
 
 print("✅ Spark Session with Delta Lake created successfully.")
 
-# Schema cho dữ liệu từ Kafka
+# Schema cho dữ liệu Sparkov từ Debezium CDC
+# Debezium gửi dạng: {"payload": {"after": {...}}}
 schema = StructType([
-    StructField("Time", DoubleType(), True),
-    StructField("V1", DoubleType(), True),
-    StructField("V2", DoubleType(), True),
-    StructField("V3", DoubleType(), True),
-    StructField("V4", DoubleType(), True),
-    StructField("V5", DoubleType(), True),
-    StructField("V6", DoubleType(), True),
-    StructField("V7", DoubleType(), True),
-    StructField("V8", DoubleType(), True),
-    StructField("V9", DoubleType(), True),
-    StructField("V10", DoubleType(), True),
-    StructField("V11", DoubleType(), True),
-    StructField("V12", DoubleType(), True),
-    StructField("V13", DoubleType(), True),
-    StructField("V14", DoubleType(), True),
-    StructField("V15", DoubleType(), True),
-    StructField("V16", DoubleType(), True),
-    StructField("V17", DoubleType(), True),
-    StructField("V18", DoubleType(), True),
-    StructField("V19", DoubleType(), True),
-    StructField("V20", DoubleType(), True),
-    StructField("V21", DoubleType(), True),
-    StructField("V22", DoubleType(), True),
-    StructField("V23", DoubleType(), True),
-    StructField("V24", DoubleType(), True),
-    StructField("V25", DoubleType(), True),
-    StructField("V26", DoubleType(), True),
-    StructField("V27", DoubleType(), True),
-    StructField("V28", DoubleType(), True),
-    StructField("Amount", DoubleType(), True),
-    StructField("Class", DoubleType(), True)
+    StructField("trans_date_trans_time", StringType(), True),
+    StructField("cc_num", StringType(), True),  # Long as String to avoid overflow
+    StructField("merchant", StringType(), True),
+    StructField("category", StringType(), True),
+    StructField("amt", DoubleType(), True),
+    StructField("first", StringType(), True),
+    StructField("last", StringType(), True),
+    StructField("gender", StringType(), True),
+    StructField("street", StringType(), True),
+    StructField("city", StringType(), True),
+    StructField("state", StringType(), True),
+    StructField("zip", StringType(), True),
+    StructField("lat", DoubleType(), True),
+    StructField("long", DoubleType(), True),
+    StructField("city_pop", StringType(), True),
+    StructField("job", StringType(), True),
+    StructField("dob", StringType(), True),
+    StructField("trans_num", StringType(), True),
+    StructField("unix_time", StringType(), True),
+    StructField("merch_lat", DoubleType(), True),
+    StructField("merch_long", DoubleType(), True),
+    StructField("is_fraud", StringType(), True)
 ])
 
-# Đọc dữ liệu từ Kafka
+# Đọc dữ liệu từ Kafka (Debezium CDC format)
 kafka_stream_df = spark \
     .readStream \
     .format("kafka") \
@@ -75,14 +67,17 @@ kafka_stream_df = spark \
     .option("startingOffsets", "latest") \
     .load()
 
-# Parse JSON và thêm metadata
-transaction_df = kafka_stream_df.selectExpr("CAST(value AS STRING)") \
-    .select(from_json(col("value"), schema).alias("data")) \
+# Parse Debezium JSON format: {"payload": {"after": {...data...}}}
+# Extract the "after" field which contains the actual transaction data
+transaction_df = kafka_stream_df.selectExpr("CAST(value AS STRING) as json_string") \
+    .select(get_json_object(col("json_string"), "$.payload.after").alias("payload")) \
+    .select(from_json(col("payload"), schema).alias("data")) \
     .select("data.*") \
+    .withColumn("trans_timestamp", to_timestamp(col("trans_date_trans_time"), "yyyy-MM-dd HH:mm:ss")) \
     .withColumn("ingestion_time", current_timestamp()) \
-    .withColumn("year", year(col("ingestion_time"))) \
-    .withColumn("month", month(col("ingestion_time"))) \
-    .withColumn("day", dayofmonth(col("ingestion_time")))
+    .withColumn("year", year(col("trans_timestamp"))) \
+    .withColumn("month", month(col("trans_timestamp"))) \
+    .withColumn("day", dayofmonth(col("trans_timestamp")))
 
 # Hàm để ghi vào Bronze layer (Raw data)
 def write_to_bronze(df, batch_id):

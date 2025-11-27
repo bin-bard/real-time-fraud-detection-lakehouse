@@ -2,15 +2,17 @@
 
 Dự án này là tiểu luận chuyên ngành, trình bày việc thiết kế và triển khai một hệ thống Data Lakehouse toàn diện để phát hiện và hỗ trợ xác minh các giao dịch gian lận thẻ tín dụng trong thời gian thực.
 
+![Architecture Diagram](docs/architecture.png)
+
 ## Mục tiêu
 
 Xây dựng một pipeline dữ liệu end-to-end, có khả năng:
 
-1. **Thu thập** luồng dữ liệu giao dịch gần như tức thời.
-2. **Xử lý và làm giàu** dữ liệu trên một kiến trúc Lakehouse tin cậy.
+1. **Thu thập** luồng dữ liệu giao dịch gần như tức thời từ PostgreSQL qua Debezium CDC.
+2. **Xử lý và làm giàu** dữ liệu trên một kiến trúc Lakehouse tin cậy với Delta Lake.
 3. **Áp dụng mô hình Machine Learning** để dự đoán và gắn cờ các giao dịch đáng ngờ với độ trễ thấp.
-4. **Cung cấp Dashboard** giám sát trực quan các hoạt động gian lận.
-5. **Trang bị Chatbot thông minh** cho phép các chuyên viên phân tích điều tra và xác minh cảnh báo bằng ngôn ngữ tự nhiên.
+4. **Cung cấp Dashboard** giám sát trực quan các hoạt động gian lận (coming soon).
+5. **Trang bị Chatbot thông minh** cho phép các chuyên viên phân tích điều tra và xác minh cảnh báo bằng ngôn ngữ tự nhiên (coming soon).
 
 ## Kiến trúc và Công nghệ sử dụng
 
@@ -62,12 +64,79 @@ real-time-fraud-detection-lakehouse/
 
 ## Dữ liệu
 
-Dự án sử dụng bộ dữ liệu công khai **Credit Card Fraud Detection** từ Kaggle.
+Dự án sử dụng bộ dữ liệu công khai **Sparkov Credit Card Transactions Fraud Detection Dataset** từ Kaggle.
 
-- **Nguồn:** [https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud)
-- **Đặc điểm:** Dữ liệu chứa các giao dịch thẻ tín dụng trong 2 ngày tại Châu Âu. Dữ liệu có tính mất cân bằng cao (0.172% là gian lận), phản ánh đúng thách thức của bài toán trong thực tế.
+- **Nguồn:** [https://www.kaggle.com/datasets/kartik2112/fraud-detection](https://www.kaggle.com/datasets/kartik2112/fraud-detection)
+- **Files:**
+  - `data/fraudTrain.csv` - Training dataset (1,296,675 transactions)
+  - `data/fraudTest.csv` - Test dataset (555,719 transactions)
+- **Đặc điểm:** Dữ liệu chứa các giao dịch thẻ tín dụng được tạo bởi Sparkov Data Generation từ 01/01/2019 đến 31/12/2020. Bộ dữ liệu bao gồm thông tin địa lý chi tiết (vĩ độ/kinh độ của khách hàng và cửa hàng), thông tin nhân khẩu học (tuổi, giới tính, nghề nghiệp), và các đặc điểm giao dịch thực tế.
+
+### Schema Dữ Liệu
+
+| Cột                              | Kiểu dữ liệu | Mô tả                                                |
+| -------------------------------- | ------------ | ---------------------------------------------------- |
+| `trans_date_trans_time`          | DateTime     | Thời gian giao dịch                                  |
+| `cc_num`                         | Long         | Số thẻ tín dụng                                      |
+| `merchant`                       | String       | Tên cửa hàng                                         |
+| `category`                       | String       | Danh mục sản phẩm (grocery_pos, gas_transport, etc.) |
+| `amt`                            | Double       | Số tiền giao dịch                                    |
+| `first`, `last`                  | String       | Họ tên khách hàng                                    |
+| `gender`                         | String       | Giới tính (M/F)                                      |
+| `street`, `city`, `state`, `zip` | String/Int   | Địa chỉ khách hàng                                   |
+| `lat`, `long`                    | Double       | **Vị trí địa lý khách hàng**                         |
+| `city_pop`                       | Integer      | Dân số thành phố                                     |
+| `job`                            | String       | Nghề nghiệp                                          |
+| `dob`                            | Date         | Ngày sinh                                            |
+| `trans_num`                      | String       | Mã giao dịch (unique identifier)                     |
+| `unix_time`                      | Long         | Unix timestamp                                       |
+| `merch_lat`, `merch_long`        | Double       | **Vị trí địa lý cửa hàng**                           |
+| `is_fraud`                       | Integer      | Nhãn gian lận (0: Normal, 1: Fraud)                  |
+
+### Features Engineering (Silver Layer)
+
+Hệ thống tự động tạo **15 features** từ dữ liệu gốc:
+
+1. **Geographic Features:**
+
+   - `distance_km`: Khoảng cách Haversine giữa khách hàng và cửa hàng
+   - `is_distant_transaction`: Cờ giao dịch xa (>100km)
+
+2. **Demographic Features:**
+
+   - `age`: Tuổi tính từ ngày sinh
+   - `gender_encoded`: Mã hóa giới tính (0/1)
+
+3. **Time Features:**
+
+   - `hour`, `day_of_week`, `is_weekend`
+   - `hour_sin`, `hour_cos`: Cyclic encoding cho giờ
+   - `is_late_night`: Cờ giao dịch đêm khuya (11PM-5AM)
+
+4. **Transaction Amount Features:**
+   - `log_amount`: Log transformation của số tiền
+   - `amount_bin`: Phân loại khoảng tiền (0-5)
+   - `is_zero_amount`, `is_high_amount`: Cờ số tiền đặc biệt
 
 ## Hướng dẫn cài đặt và chạy dự án
+
+> **⚠️ QUAN TRỌNG - ĐÃ CẬP NHẬT LÊN SPARKOV DATASET (v2.0)**
+>
+> Dự án đã được **hoàn toàn cập nhật** để sử dụng bộ dữ liệu **Sparkov Credit Card Transactions** thay vì dataset PCA cũ.
+>
+> **Thay đổi chính:**
+>
+> - ✅ Dataset: `fraudTrain.csv` & `fraudTest.csv` (thay vì `creditcard.csv`)
+> - ✅ Schema: 22 cột với thông tin địa lý, nhân khẩu học đầy đủ (thay vì V1-V28 PCA)
+> - ✅ Feature Engineering: Distance (Haversine), Age, Time features (thay vì PCA interactions)
+> - ✅ Ingestion: PostgreSQL + Debezium CDC (thay vì Kafka trực tiếp)
+> - ✅ Bronze Layer: Raw Sparkov transactions
+> - ✅ Silver Layer: 15 engineered features cho ML
+> - ✅ Gold Layer: Geographic, category, state aggregations
+> - ✅ ML Training: Random Forest với balanced sampling
+> - ✅ FastAPI: Endpoints cho Sparkov features
+>
+> **Chi tiết:** Xem file `docs/PROJECT_SPECIFICATION.md` để hiểu rõ kiến trúc và yêu cầu.
 
 ### 1. Yêu cầu hệ thống
 

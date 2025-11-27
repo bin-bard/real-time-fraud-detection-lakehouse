@@ -40,20 +40,33 @@ def create_spark_session():
 
 def prepare_features(df):
     """
-    Chuẩn bị features cho machine learning
+    Chuẩn bị features cho machine learning từ Sparkov dataset
+    Sử dụng các features đã được engineer trong Silver layer
     """
     logger.info("Preparing features for ML...")
     
-    # Chọn các features để training (loại bỏ các columns không cần thiết)
+    # Chọn các features quan trọng cho fraud detection
     feature_cols = [
-        "Time", "Amount", "log_amount", "is_zero_amount", "is_high_amount",
-        "hour_of_day", "day_of_week", "amount_v1_ratio", "v1_v2_interaction"
-    ] + [f"V{i}" for i in range(1, 29)]
+        # Transaction features
+        "amt", "log_amount", "amount_bin",
+        "is_zero_amount", "is_high_amount",
+        
+        # Geographic features
+        "distance_km", "is_distant_transaction",
+        
+        # Demographic features
+        "age", "gender_encoded",
+        
+        # Time features
+        "hour", "day_of_week", "is_weekend", "is_late_night",
+        "hour_sin", "hour_cos"
+    ]
     
     # Vector assembler
     assembler = VectorAssembler(
         inputCols=feature_cols,
-        outputCol="features_raw"
+        outputCol="features_raw",
+        handleInvalid="skip"  # Skip rows with invalid values
     )
     
     # Standard scaler  
@@ -64,6 +77,7 @@ def prepare_features(df):
         withMean=True
     )
     
+    logger.info(f"Selected {len(feature_cols)} features for training")
     return assembler, scaler
 
 def train_model(algorithm="random_forest"):
@@ -82,10 +96,33 @@ def train_model(algorithm="random_forest"):
         logger.info("Loading data from Silver layer...")
         df = spark.read.format("delta").load(silver_path)
         
+        # Cast is_fraud to integer for ML
+        df = df.withColumn("is_fraud", col("is_fraud").cast("integer"))
+        
         # Đổi tên target column
-        df = df.withColumnRenamed("Class", "label")
+        df = df.withColumnRenamed("is_fraud", "label")
         
         logger.info(f"Total samples: {df.count()}")
+        
+        # Check class distribution
+        fraud_count = df.filter(col("label") == 1).count()
+        normal_count = df.filter(col("label") == 0).count()
+        logger.info(f"Fraud samples: {fraud_count}")
+        logger.info(f"Normal samples: {normal_count}")
+        logger.info(f"Fraud ratio: {fraud_count/(fraud_count+normal_count)*100:.2f}%")
+        
+        # Handle class imbalance - undersample normal transactions
+        # Keep all fraud transactions, sample normal transactions
+        fraud_df = df.filter(col("label") == 1)
+        normal_df = df.filter(col("label") == 0)
+        
+        # Sample normal transactions to balance (e.g., 3:1 ratio)
+        sample_ratio = min(1.0, (fraud_count * 3) / normal_count)
+        normal_sampled = normal_df.sample(withReplacement=False, fraction=sample_ratio, seed=42)
+        
+        # Combine datasets
+        df = fraud_df.union(normal_sampled)
+        logger.info(f"Balanced dataset size: {df.count()}")
         
         # Split data
         train_df, test_df = df.randomSplit([0.8, 0.2], seed=42)
@@ -101,8 +138,9 @@ def train_model(algorithm="random_forest"):
             classifier = RandomForestClassifier(
                 featuresCol="features",
                 labelCol="label", 
-                numTrees=100,
-                maxDepth=10,
+                numTrees=200,  # Increase for better performance
+                maxDepth=15,   # Deeper trees for complex patterns
+                minInstancesPerNode=5,
                 seed=42
             )
         else:  # logistic_regression
@@ -110,7 +148,8 @@ def train_model(algorithm="random_forest"):
                 featuresCol="features",
                 labelCol="label",
                 maxIter=100,
-                regParam=0.01
+                regParam=0.01,
+                elasticNetParam=0.1  # L1 + L2 regularization
             )
         
         # Create pipeline
@@ -121,11 +160,13 @@ def train_model(algorithm="random_forest"):
             
             # Log parameters
             if algorithm == "random_forest":
-                mlflow.log_param("num_trees", 100)
-                mlflow.log_param("max_depth", 10)
+                mlflow.log_param("num_trees", 200)
+                mlflow.log_param("max_depth", 15)
+                mlflow.log_param("min_instances_per_node", 5)
             else:
                 mlflow.log_param("max_iter", 100)
                 mlflow.log_param("reg_param", 0.01)
+                mlflow.log_param("elastic_net_param", 0.1)
                 
             mlflow.log_param("algorithm", algorithm)
             mlflow.log_param("train_samples", train_df.count())
