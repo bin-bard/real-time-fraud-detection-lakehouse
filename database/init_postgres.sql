@@ -1,5 +1,8 @@
 -- Khởi tạo database cho hệ thống Fraud Detection với Sparkov dataset
-CREATE DATABASE frauddb;
+-- Sử dụng IF NOT EXISTS để tránh lỗi khi database đã tồn tại
+SELECT 'CREATE DATABASE frauddb'
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'frauddb')\gexec
+
 \connect frauddb;
 
 -- Tạo schemas
