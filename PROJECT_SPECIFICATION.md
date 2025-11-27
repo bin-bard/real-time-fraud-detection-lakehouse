@@ -8,7 +8,7 @@
 1. Nguyễn Thanh Tài - 22133049
 2. Võ Triệu Phúc - 22133043
    **GVHD:** ThS. Phan Thị Thể
-   **Phiên bản:** 3.1 (Đã kiểm tra kỹ Schema Dataset Sparkov)
+   **Phiên bản:** 4.0
 
 ---
 
@@ -16,16 +16,16 @@
 
 ### 1.1. Mục tiêu cốt lõi
 
-Dự án nhằm xây dựng một **Modern Data Platform (Nền tảng dữ liệu hiện đại)** toàn diện, giải quyết bài toán phát hiện gian lận thẻ tín dụng với các tiêu chí:
+Dự án xây dựng một **Modern Data Platform (Nền tảng dữ liệu hiện đại)** giải quyết bài toán phát hiện gian lận thẻ tín dụng với các đặc điểm:
 
-1. **Real-time Ingestion:** Bắt các thay đổi dữ liệu (CDC) từ hệ thống giao dịch nguồn ngay lập tức.
-2. **Lakehouse Architecture:** Kết hợp độ tin cậy của Data Warehouse và khả năng mở rộng của Data Lake.
-3. **MLOps khép kín:** Tự động hóa quy trình huấn luyện và triển khai mô hình học máy.
-4. **Nghiệp vụ thông minh:** Cung cấp Dashboard giám sát và Chatbot trợ lý ảo cho chuyên viên điều tra.
+1. **Real-time Processing:** Xử lý luồng giao dịch liên tục, phát hiện gian lận ngay khi sự kiện xảy ra.
+2. **Lakehouse Architecture:** Sử dụng Delta Lake để đảm bảo tính toàn vẹn (ACID) và truy vết lịch sử (Time Travel).
+3. **Real-time Inference:** Tích hợp mô hình AI qua API để chấm điểm gian lận tức thời.
+4. **Interactive Verification:** Cung cấp Chatbot và Dashboard giúp chuyên viên điều tra truy vấn dữ liệu theo ngôn ngữ tự nhiên.
 
-### 1.2. Phạm vi
+### 1.2. Phạm vi dữ liệu
 
-Hệ thống xử lý luồng dữ liệu giả lập từ 01/01/2019 đến 31/12/2020, mô phỏng hoạt động của 1000 khách hàng và 800 nhà bán hàng.
+Hệ thống xử lý luồng dữ liệu giả lập từ 01/01/2019 đến 31/12/2020. Dữ liệu được "phát lại" (replayed) để mô phỏng môi trường thời gian thực.
 
 ---
 
@@ -36,145 +36,160 @@ Hệ thống xử lý luồng dữ liệu giả lập từ 01/01/2019 đến 31/
 
 ### Schema chi tiết (Dữ liệu đầu vào):
 
-*Lưu ý: Bỏ qua cột Index (số thứ tự dòng) đầu tiên trong file CSV.*
+*Lưu ý: Dữ liệu CSV gốc có thể có cột index không tên ở đầu, hệ thống sẽ bỏ qua cột này.*
 
-| STT | Tên cột                 | Kiểu dữ liệu | Ý nghĩa nghiệp vụ                                     |
-| :-- | :------------------------ | :-------------- | :-------------------------------------------------------- |
-| 1   | `trans_date_trans_time` | DateTime        | Thời gian giao dịch (VD: 01/01/2019 00:00).             |
-| 2   | `cc_num`                | Long            | Số thẻ tín dụng (ID khách hàng).                    |
-| 3   | `merchant`              | String          | Tên đơn vị bán hàng (VD: fraud_Rippin).             |
-| 4   | `category`              | String          | Danh mục (VD: grocery_pos, gas_transport).               |
-| 5   | `amt`                   | Double          | Số tiền giao dịch.                                     |
-| 6   | `first`                 | String          | Tên đệm.                                               |
-| 7   | `last`                  | String          | Họ.                                                      |
-| 8   | `gender`                | String          | Giới tính (M/F).                                        |
-| 9   | `street`                | String          | Địa chỉ đường.                                      |
-| 10  | `city`                  | String          | Thành phố.                                              |
-| 11  | `state`                 | String          | Bang (VD: NC, NY).                                        |
-| 12  | `zip`                   | Integer         | Mã bưu chính.                                          |
-| 13  | `lat`                   | Double          | **Vĩ độ của chủ thẻ (Customer Latitude).**    |
-| 14  | `long`                  | Double          | **Kinh độ của chủ thẻ (Customer Longitude).**  |
-| 15  | `city_pop`              | Integer         | Dân số thành phố.                                     |
-| 16  | `job`                   | String          | Nghề nghiệp.                                            |
-| 17  | `dob`                   | Date            | Ngày sinh (Dùng tính tuổi).                           |
-| 18  | `trans_num`             | String          | Mã giao dịch duy nhất (Transaction ID).                |
-| 19  | `unix_time`             | Long            | Thời gian dạng Unix Timestamp (VD: 1325376018).         |
-| 20  | `merch_lat`             | Double          | **Vĩ độ của cửa hàng (Merchant Latitude).**   |
-| 21  | `merch_long`            | Double          | **Kinh độ của cửa hàng (Merchant Longitude).** |
-| 22  | `is_fraud`              | Integer         | Nhãn gian lận (0: Thường, 1: Gian lận).              |
+| STT | Tên cột                 | Kiểu dữ liệu | Ý nghĩa nghiệp vụ                             |
+| :-- | :------------------------ | :-------------- | :------------------------------------------------ |
+| 1   | `trans_date_trans_time` | DateTime        | Thời gian giao dịch.                            |
+| 2   | `cc_num`                | Long            | Số thẻ tín dụng (ID khách hàng).            |
+| 3   | `merchant`              | String          | Tên đơn vị bán hàng (VD: fraud_Rippin).     |
+| 4   | `category`              | String          | Danh mục (VD: grocery_pos).                      |
+| 5   | `amt`                   | Double          | Số tiền giao dịch.                             |
+| 6   | `first`                 | String          | Tên đệm.                                       |
+| 7   | `last`                  | String          | Họ.                                              |
+| 8   | `gender`                | String          | Giới tính (M/F).                                |
+| 9   | `street`                | String          | Địa chỉ đường.                              |
+| 10  | `city`                  | String          | Thành phố.                                      |
+| 11  | `state`                 | String          | Bang.                                             |
+| 12  | `zip`                   | Integer         | Mã bưu chính.                                  |
+| 13  | `lat`                   | Double          | Vị trí chủ thẻ (Latitude).                    |
+| 14  | `long`                  | Double          | Vị trí chủ thẻ (Longitude).                   |
+| 15  | `city_pop`              | Integer         | Dân số thành phố.                             |
+| 16  | `job`                   | String          | Nghề nghiệp.                                    |
+| 17  | `dob`                   | Date            | Ngày sinh.                                       |
+| 18  | `trans_num`             | String          | Mã giao dịch.                                   |
+| 19  | `unix_time`             | Long            | Thời gian dạng Unix Timestamp (VD: 1325376018). |
+| 20  | `merch_lat`             | Double          | Vị trí cửa hàng (Latitude).                   |
+| 21  | `merch_long`            | Double          | Vị trí cửa hàng (Longitude).                  |
+| 22  | `is_fraud`              | Integer         | Nhãn thực tế (0: Sạch, 1: Gian lận).         |
 
 ---
 
 ## 3. KIẾN TRÚC HỆ THỐNG (SYSTEM ARCHITECTURE)
 
-Hệ thống tuân thủ mô hình **Lakehouse** với các lớp công nghệ sau:
+Hệ thống được chia thành các tầng (Layers) rõ ràng:
 
-### 3.1. Layer 1: Ingestion (Thu thập dữ liệu)
+### 3.1. Layer 1: Ingestion (Thu thập)
 
-* **PostgreSQL:** Đóng vai trò là Cơ sở dữ liệu giao dịch nguồn (Source OLTP). Một Python Script sẽ "bơm" dữ liệu từ file CSV vào đây theo thời gian thực.
-* **Debezium:** Công cụ Change Data Capture (CDC). Lắng nghe transaction log của PostgreSQL và bắt mọi sự kiện `INSERT` mới.
-* **Apache Kafka:** Message Queue nhận luồng sự kiện từ Debezium, đảm bảo đệm dữ liệu tin cậy trước khi xử lý.
+* **PostgreSQL:** Đóng vai trò là Database nguồn (OLTP).
+* **Debezium:** Bắt các thay đổi (CDC) từ Postgres và đẩy vào Kafka.
+* **Apache Kafka:** Hàng đợi thông điệp trung gian.
 
-### 3.2. Layer 2: Storage (Lưu trữ - The Lakehouse)
+### 3.2. Layer 2: Storage (Lưu trữ - Lakehouse)
 
-* **MinIO:** Object Storage (S3 Compatible), nơi lưu trữ vật lý của Data Lake.
-* **Delta Lake:** Định dạng lưu trữ bảng, cung cấp tính năng ACID Transaction, Schema Enforcement và Time Travel.
-* **Hive Metastore:** Quản lý metadata (cấu trúc bảng) trung tâm.
+* **MinIO:** Object Storage (S3 Compatible).
+* **Delta Lake:** Định dạng lưu trữ bảng (Bronze, Silver, Gold).
+* **Hive Metastore:** Quản lý metadata.
 
-### 3.3. Layer 3: Processing (Xử lý dữ liệu)
+### 3.3. Layer 3: Processing (Xử lý Stream)
 
-Sử dụng **Apache Spark** thực hiện mô hình **Medallion Architecture**:
+* **Apache Spark (Structured Streaming):** Engine xử lý chính, chạy liên tục 24/7 để chuyển đổi dữ liệu từ Kafka -> Bronze -> Silver -> Gold.
 
-* **Bronze Table:** Chứa dữ liệu thô (Raw JSON) đọc từ Kafka.
-* **Silver Table:** Dữ liệu đã làm sạch, chuẩn hóa kiểu dữ liệu, và **Feature Engineering** (Tính `distance_km` từ tọa độ `lat/long` và `merch_lat/merch_long`; tính `age` từ `dob`).
-* **Gold Table:** Dữ liệu tổng hợp (Aggregated) phục vụ báo cáo (VD: Tổng gian lận theo Bang, theo Merchant).
+### 3.4. Layer 4: Inference (Dự đoán AI)
 
-### 3.4. Layer 4: ML & MLOps (Học máy & Vận hành)
+* **FastAPI:** Cung cấp API `/predict`. Nhận thông tin giao dịch, trả về kết quả dự đoán gian lận.
 
-* **MLflow:**
-  * **Tracking:** Ghi lại các tham số, metrics (AUC, Accuracy) của các lần thử nghiệm mô hình.
-  * **Model Registry:** Quản lý phiên bản mô hình (Staging/Production).
-* **FastAPI:** Đóng gói mô hình đã huấn luyện (từ MLflow) thành API RESTful (`/predict`) để phục vụ dự đoán thời gian thực.
+### 3.5. Layer 5: Orchestration (Điều phối Batch - Apache Airflow)
+Apache Airflow đóng vai trò "Nhạc trưởng" (Orchestrator), chịu trách nhiệm lập lịch và quản lý các quy trình xử lý theo lô (Batch Workflows) chạy định kỳ, tách biệt hoàn toàn với luồng xử lý thời gian thực.
 
-### 3.5. Layer 5: Orchestration (Điều phối - Apache Airflow)
+Hệ thống bao gồm 3 DAGs (Directed Acyclic Graphs) chính:
 
-Airflow đóng vai trò "Nhạc trưởng" quản lý toàn bộ hệ thống batch:
+#### **DAG 01: Automated Model Retraining (Tự động huấn luyện lại mô hình)**
+*   **Mục tiêu:** Cập nhật mô hình AI để thích nghi với các hành vi gian lận mới (Concept Drift), ngăn chặn việc mô hình bị lỗi thời.
+*   **Lịch chạy (Schedule):** 00:00 Hàng ngày (Daily).
+*   **Các bước thực hiện (Tasks):**
+    1.  **Extract Data:** Spark đọc dữ liệu lịch sử từ bảng **Silver** (ví dụ: dữ liệu 30 ngày gần nhất).
+    2.  **Train Model:** Huấn luyện lại mô hình (Random Forest/Logistic Regression) trên tập dữ liệu mới này.
+    3.  **Evaluate:** So sánh chỉ số hiệu quả (AUC, F1-Score) của mô hình vừa huấn luyện với mô hình đang chạy hiện tại (Production Model).
+    4.  **Register Model:**
+        *   Nếu mô hình mới tốt hơn: Đăng ký phiên bản mới vào **MLflow Model Registry** và chuyển trạng thái sang "Production".
+        *   Nếu không: Hủy bỏ, giữ nguyên mô hình cũ.
 
-* **DAG 1 - Model Retraining:** Chạy hàng đêm. Đọc dữ liệu Silver mới nhất -> Train lại model -> Đánh giá -> Nếu tốt hơn model cũ thì đăng ký vào MLflow Registry.
-* **DAG 2 - Data Maintenance:** Chạy định kỳ. Thực hiện lệnh `VACUUM` và `OPTIMIZE` trên các bảng Delta Lake để dọn dẹp file rác và tối ưu hiệu suất đọc.
-* **DAG 3 - Daily Reporting:** Chạy cuối ngày. Tổng hợp dữ liệu từ Silver -> Ghi vào bảng Gold (Report Table) để Dashboard load nhanh hơn.
+#### **DAG 02: Lakehouse Maintenance (Bảo trì hệ thống Delta Lake)**
+*   **Mục tiêu:** Khắc phục vấn đề "Small Files Problem" (nhiều file nhỏ sinh ra do Streaming) giúp tăng tốc độ truy vấn và giải phóng dung lượng lưu trữ.
+*   **Lịch chạy:** 02:00 sáng Chủ Nhật hàng tuần (Weekly).
+*   **Các bước thực hiện (Tasks):**
+    1.  **Optimize Table:** Chạy lệnh `OPTIMIZE` trên các bảng Bronze/Silver để gộp các file Parquet nhỏ thành file lớn hơn.
+    2.  **Vacuum Table:** Chạy lệnh `VACUUM` để xóa vật lý các file dữ liệu cũ không còn dùng đến (quá hạn lưu trữ Time Travel, ví dụ: > 7 ngày) để tiết kiệm dung lượng MinIO.
 
-### 3.6. Layer 6: Query & Visualization (Truy vấn & Hiển thị)
+#### **DAG 03: Daily Reporting (Tổng hợp báo cáo ngày)**
+*   **Mục tiêu:** Tạo ra các bảng báo cáo tĩnh (Static Reports) để giảm tải cho hệ thống khi Dashboard truy vấn.
+*   **Lịch chạy:** 23:55 Hàng ngày.
+*   **Các bước thực hiện (Tasks):**
+    1.  **Aggregate:** Tính toán tổng số vụ gian lận, tổng thiệt hại tài chính theo từng Bang/Thành phố trong ngày.
+    2.  **Write to Gold:** Ghi đè (Overwrite) hoặc nối (Append) kết quả vào bảng `daily_fraud_summary` tại tầng **Gold**.
 
-* **Trino (PrestoSQL):** Engine truy vấn SQL phân tán, cho phép truy vấn trực tiếp trên Delta Lake/MinIO với tốc độ cực nhanh.
-* **Metabase:** Dashboard kết nối tới Trino để hiển thị biểu đồ.
+### 3.6. Layer 6: Query & Consumption (Truy vấn & Sử dụng)
 
-### 3.7. Layer 7: Verification (Xác minh & Tương tác)
-
-* **Chatbot (Streamlit + LangChain + OpenAI):**
-  * Kết nối với Trino.
-  * Cho phép người dùng hỏi bằng ngôn ngữ tự nhiên (VD: *"Liệt kê 5 giao dịch gian lận lớn nhất tại New York"*).
-  * LangChain chuyển câu hỏi thành SQL -> Trino thực thi -> Trả kết quả lại cho Chatbot.
+* **Trino (PrestoSQL):** Engine truy vấn SQL phân tán tốc độ cao.
+* **Metabase:** Dashboard giám sát.
+* **Chatbot (Streamlit + LangChain):** Công cụ xác minh nghiệp vụ.
 
 ---
 
 ## 4. QUY TRÌNH XỬ LÝ CHI TIẾT (WORKFLOWS)
 
-### 4.1. Luồng xử lý thời gian thực (Real-time Pipeline)
+### 4.1. Luồng xử lý thời gian thực (Real-time Streaming Pipeline)
 
-1. **Simulation:** Python script insert 1 giao dịch vào PostgreSQL.
-2. **Capture:** Debezium bắt sự kiện -> Gửi JSON vào Kafka topic `transactions`.
-3. **Stream Processing (Spark):**
-   * Đọc Kafka.
-   * Lưu vào **Bronze**.
-   * Biến đổi, tính toán đặc trưng (Feature Engineering) -> Lưu vào **Silver**.
-   * (Optional) Gọi API FastAPI để lấy điểm gian lận (Fraud Score).
-4. **Monitoring:** Dữ liệu Silver xuất hiện trên Metabase Dashboard ngay lập tức.
+*Luồng này chạy liên tục, do Spark Streaming đảm nhận, Airflow không can thiệp.*
 
-### 4.2. Luồng xác minh nghiệp vụ (Investigation Flow)
+1. **Phát sinh giao dịch:** Python Producer `INSERT` 1 dòng vào PostgreSQL (Giả lập giao dịch mới).
+2. **CDC:** Debezium bắt sự kiện Insert -> Gửi bản tin JSON vào Kafka.
+3. **Spark - Bronze Layer:** Spark đọc từ Kafka, ghi dữ liệu thô vào bảng **Bronze** (Append-only).
+4. **Spark - Silver Layer (Quan trọng):**
+   * Đọc từ Bronze.
+   * **Feature Engineering:** Tính `distance_km` (khoảng cách người-cửa hàng), tính `age` (tuổi).
+   * **Real-time Inference (Gọi API):** Spark gửi các feature (`amt`, `distance`, `age`...) đến **FastAPI**.
+     * *Lưu ý:* Không gửi cột `is_fraud` (đáp án) cho API.
+   * **Lưu kết quả:** Lưu vào bảng **Silver** gồm cả cột `is_fraud` (thực tế từ nguồn) và `fraud_prediction` (do API dự đoán) để đối chiếu.
+5. **Spark - Gold Layer:** Spark tự động tính toán lại các chỉ số tổng hợp (VD: Số lượng gian lận trong 1 giờ qua) và cập nhật vào bảng **Gold**.
 
-1. Hệ thống cảnh báo giao dịch nghi ngờ.
-2. Chuyên viên mở **Chatbot Streamlit**.
-3. Nhập lệnh: *"Kiểm tra lịch sử giao dịch của thẻ 123456 trong 30 ngày qua"*.
-4. Chatbot query Trino -> Hiển thị danh sách giao dịch, vị trí địa lý, merchant.
-5. Chuyên viên xác nhận gian lận hay không.
+> **Ghi chú về Update/Delete:** Trong phạm vi đồ án này, hệ thống tập trung xử lý luồng **INSERT** (Giao dịch mới). Nếu có Update/Delete từ nguồn, Debezium vẫn bắt được và lưu vào Bronze để truy vết lịch sử, nhưng logic xử lý Silver sẽ ưu tiên dữ liệu mới nhất.
 
-### 4.3. Luồng MLOps & Bảo trì (Batch Flow - Airflow)
+### 4.2. Luồng Batch & Bảo trì (Batch Pipeline)
 
-1. **00:00 hàng ngày:** Airflow kích hoạt DAG Retrain.
-2. Spark đọc dữ liệu lịch sử từ Silver -> Train Random Forest model.
-3. Log kết quả vào MLflow.
-4. Nếu Model mới tốt hơn -> Update API FastAPI.
-5. **02:00 hàng ngày:** Airflow kích hoạt DAG Maintenance -> Clean up Data Lake.
+*Luồng này chạy định kỳ theo lịch, do **Airflow** kích hoạt.*
+
+1. **DAG Model Retraining (00:00 hàng ngày):**
+   * Task 1: Spark đọc dữ liệu lịch sử từ bảng **Silver**.
+   * Task 2: Huấn luyện lại mô hình (Random Forest/Logistic Regression).
+   * Task 3: So sánh độ chính xác với mô hình hiện tại. Nếu tốt hơn -> Đăng ký vào MLflow và cập nhật cho FastAPI.
+2. **DAG Lakehouse Maintenance (02:00 hàng tuần):**
+   * Task 1: Chạy lệnh `VACUUM` trên các bảng Delta để xóa các file Parquet cũ không còn dùng đến, giải phóng dung lượng MinIO.
+
+### 4.3. Luồng Nghiệp vụ (Business Flow)
+
+1. **Giám sát:** Chuyên viên nhìn Dashboard Metabase, thấy biểu đồ "Gian lận dự đoán" tăng cao.
+2. **Điều tra:** Chuyên viên dùng Chatbot hỏi: *"Cho tôi biết chi tiết các giao dịch gian lận tại bang CA trong 10 phút qua"*.
+3. **Xử lý:** Chatbot (qua Trino) trả về danh sách -> Chuyên viên xác minh và khóa thẻ.
 
 ---
 
 ## 5. YÊU CẦU CÔNG NGHỆ & MÔI TRƯỜNG
 
-Hệ thống được triển khai hoàn toàn trên **Docker & Docker Compose**.
+Hệ thống triển khai trên Docker Compose:
 
-| Thành phần            | Image/Service                    | Cổng (Port) |
-| :---------------------- | :------------------------------- | :----------- |
-| **Source DB**     | `postgres:14`                  | 5432         |
-| **CDC**           | `debezium/connect`             | 8083         |
-| **Message Queue** | `confluentinc/cp-kafka`        | 9092         |
-| **Storage**       | `minio/minio`                  | 9000, 9001   |
-| **Orchestration** | `apache/airflow`               | 8080         |
-| **Processing**    | `bitnami/spark`                | 7077, 8081   |
-| **Query Engine**  | `trinodb/trino`                | 8082         |
-| **Visualization** | `metabase/metabase`            | 3000         |
-| **MLOps**         | `ghcr.io/mlflow/mlflow`        | 5000         |
-| **Serving API**   | `fastapi-app` (Custom build)   | 8000         |
-| **Chatbot**       | `streamlit-app` (Custom build) | 8501         |
+| Thành phần            | Image/Service             | Cổng (Port) | Vai trò                     |
+| :---------------------- | :------------------------ | :----------- | :--------------------------- |
+| **Source DB**     | `postgres:14`           | 5432         | Nguồn dữ liệu giả lập.  |
+| **CDC**           | `debezium/connect`      | 8083         | Bắt thay đổi dữ liệu.   |
+| **Kafka**         | `confluentinc/cp-kafka` | 9092         | Hàng đợi thông điệp.   |
+| **Storage**       | `minio/minio`           | 9000, 9001   | Data Lake (S3).              |
+| **Spark**         | `bitnami/spark`         | 7077, 8080   | Xử lý Stream & Batch.      |
+| **Query Engine**  | `trinodb/trino`         | 8082         | Truy vấn SQL tương tác.  |
+| **Orchestration** | `apache/airflow`        | 8081         | Điều phối tác vụ Batch. |
+| **MLOps**         | `ghcr.io/mlflow/mlflow` | 5000         | Quản lý model.             |
+| **Visualization** | `metabase/metabase`     | 3000         | Dashboard.                   |
+| **API**           | `fastapi-app`           | 8000         | API dự đoán Real-time.    |
+| **Chatbot**       | `streamlit-app`         | 8501         | Giao diện Chatbot.          |
 
 ---
 
 ## 6. KẾT QUẢ BÀN GIAO (DELIVERABLES)
 
-1. **Source Code:** Repository GitHub chứa toàn bộ mã nguồn, Dockerfile, DAGs, Notebooks.
-2. **Tài liệu báo cáo:** Thuyết minh kiến trúc, quy trình xử lý, giải thích thuật toán ML.
-3. **Hệ thống Demo:**
-   * Dashboard Metabase cập nhật realtime.
-   * Airflow UI hiển thị các DAGs chạy thành công.
-   * Chatbot trả lời câu hỏi nghiệp vụ chính xác.
-   * MLflow UI hiển thị quá trình tracking model.
+1. **Mã nguồn (Source Code):** Full stack trên GitHub.
+2. **Báo cáo (Report):** Tài liệu thuyết minh chi tiết kiến trúc Lakehouse.
+3. **Sản phẩm Demo:**
+   * Hệ thống chạy mượt mà từ Ingestion -> Dashboard.
+   * Chatbot trả lời đúng câu hỏi nghiệp vụ.
+   * Mô hình AI đưa ra dự đoán cho từng giao dịch.
