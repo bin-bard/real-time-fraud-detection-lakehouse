@@ -41,6 +41,26 @@ services:
     networks:
       - data_network
 
+  # PostgreSQL Source Database (OLTP - Transaction source)
+  postgres:
+    image: postgres:14
+    container_name: postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: frauddb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init_postgres.sql:/docker-entrypoint-initdb.d/init.sql
+    command:
+      - "postgres"
+      - "-c"
+      - "wal_level=logical" # Required for Debezium CDC
+    networks:
+      - data_network
+
   # PostgreSQL for Hive Metastore
   metastore-db:
     image: postgres:13
@@ -115,13 +135,42 @@ services:
     networks:
       - data_network
 
-  # Dịch vụ Producer để đẩy dữ liệu vào Kafka
+  # Debezium Connect - CDC từ PostgreSQL sang Kafka
+  debezium:
+    image: debezium/connect:2.5
+    container_name: debezium
+    ports:
+      - "8083:8083"
+    environment:
+      BOOTSTRAP_SERVERS: kafka:9092
+      GROUP_ID: 1
+      CONFIG_STORAGE_TOPIC: debezium_configs
+      OFFSET_STORAGE_TOPIC: debezium_offsets
+      STATUS_STORAGE_TOPIC: debezium_statuses
+      # PostgreSQL connection
+      CONNECT_KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+    depends_on:
+      - kafka
+      - postgres
+    networks:
+      - data_network
+
+  # Data Producer - Insert giao dịch vào PostgreSQL
   data-producer:
     build:
       context: ./services/data-producer
     container_name: data-producer
     depends_on:
-      - kafka
+      - postgres
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: frauddb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
     volumes:
       - ./data:/data # Mount thư mục data chứa file csv
     networks:
@@ -140,7 +189,7 @@ services:
       - AWS_SECRET_ACCESS_KEY=minio123
       - MLFLOW_S3_ENDPOINT_URL=http://minio:9000
     volumes:
-      - ./services/mlflow:/app
+      - ./deployment:/app
     working_dir: /app
     command: bash start.sh
     depends_on:
@@ -165,7 +214,7 @@ services:
   # MinIO Setup Service (chạy 1 lần để setup buckets)
   minio-setup:
     build:
-      context: ./scripts
+      context: ./deployment/minio
     container_name: minio-setup
     depends_on:
       - minio
@@ -175,6 +224,7 @@ services:
       - setup
 
 volumes:
+  postgres_data:
   minio_data:
   metastore_db:
   mlflow_db:
