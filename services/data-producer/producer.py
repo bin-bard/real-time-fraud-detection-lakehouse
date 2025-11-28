@@ -14,6 +14,7 @@ POSTGRES_USER = os.environ.get("POSTGRES_USER", "postgres")
 POSTGRES_PASSWORD = os.environ.get("POSTGRES_PASSWORD", "postgres")
 
 DATA_FILE = "/data/fraudTrain.csv"
+CHECKPOINT_FILE = "/data/producer_checkpoint.txt"
 # Hệ số co giãn thời gian để mô phỏng stream nhanh hơn thực tế
 # 0.001 = giao dịch 1 ngày chạy trong vài phút
 TIME_SCALING_FACTOR = 0.001 
@@ -34,17 +35,39 @@ while conn is None:
         print(f"Could not connect to PostgreSQL, retrying in 5 seconds... Error: {e}")
         time.sleep(5)
 
+# --- Đọc checkpoint (vị trí đã xử lý) ---
+def get_last_checkpoint():
+    """Đọc vị trí dòng cuối cùng đã xử lý từ checkpoint file"""
+    try:
+        with open(CHECKPOINT_FILE, 'r') as f:
+            return int(f.read().strip())
+    except FileNotFoundError:
+        return 0  # Bắt đầu từ đầu nếu chưa có checkpoint
+
+def save_checkpoint(line_number):
+    """Lưu vị trí đã xử lý vào checkpoint file"""
+    with open(CHECKPOINT_FILE, 'w') as f:
+        f.write(str(line_number))
+
 # --- Đọc và gửi dữ liệu theo thời gian ---
 def simulate_real_time_stream():
     print(f"🚀 Simulating real-time stream from {DATA_FILE}...")
     cursor = conn.cursor()
+    
+    # Đọc checkpoint
+    start_line = get_last_checkpoint()
+    print(f"📍 Resuming from line {start_line}...")
     
     try:
         with open(DATA_FILE, 'r') as file:
             reader = csv.DictReader(file)
             last_transaction_time = None
             
-            for i, row in enumerate(reader, start=1):
+            # Skip các dòng đã xử lý
+            for _ in range(start_line):
+                next(reader, None)
+            
+            for i, row in enumerate(reader, start=start_line + 1):
                 try:
                     # Parse timestamp
                     current_time_str = row['trans_date_trans_time']
@@ -65,10 +88,12 @@ def simulate_real_time_stream():
                     # Commit mỗi 100 transactions
                     if i % 100 == 0:
                         conn.commit()
+                        save_checkpoint(i)
                         print(f"📊 Processed {i} transactions...")
                         
                 except Exception as e:
                     print(f"⚠️ Error processing row {i}: {e}")
+                    conn.rollback()  # Rollback để tránh transaction aborted
                     continue
 
     except FileNotFoundError:
@@ -78,10 +103,12 @@ def simulate_real_time_stream():
     finally:
         if cursor:
             conn.commit()
+            save_checkpoint(i if 'i' in locals() else start_line)
             cursor.close()
         if conn:
             conn.close()
             print("✅ PostgreSQL connection closed.")
+        print(f"📍 Checkpoint saved at line {i if 'i' in locals() else start_line}")
 
 def send_transaction(cursor, index, row_data):
     """Helper function to process and send a single transaction to PostgreSQL."""
