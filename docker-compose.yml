@@ -105,7 +105,10 @@ services:
       - data_network
 
   spark-master:
-    image: apache/spark:3.4.1
+    build:
+      context: ./spark
+      dockerfile: Dockerfile
+    image: custom-spark:3.4.1-ml
     container_name: spark-master
     command: >
       /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
@@ -128,7 +131,10 @@ services:
       - data_network
 
   spark-worker:
-    image: apache/spark:3.4.1
+    build:
+      context: ./spark
+      dockerfile: Dockerfile
+    image: custom-spark:3.4.1-ml
     container_name: spark-worker
     depends_on:
       - spark-master

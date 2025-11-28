@@ -16,9 +16,9 @@ Dự án xây dựng pipeline xử lý dữ liệu end-to-end:
 
 ## Tech Stack
 
-| Component               | Technology               | Mô tả                        |
-| ----------------------- | ------------------------ | ------------------------------ |
-| **Source DB**     | PostgreSQL 14            | OLTP database với CDC enabled |
+| Component         | Technology               | Mô tả                          |
+| ----------------- | ------------------------ | ------------------------------ |
+| **Source DB**     | PostgreSQL 14            | OLTP database với CDC enabled  |
 | **CDC**           | Debezium 2.5             | Change Data Capture connector  |
 | **Streaming**     | Apache Kafka             | Message broker                 |
 | **Processing**    | Apache Spark 3.4.1       | Stream & batch processing      |
@@ -68,17 +68,17 @@ real-time-fraud-detection-lakehouse/
 
 ### Schema chính
 
-| Column                        | Type     | Description                   |
-| ----------------------------- | -------- | ----------------------------- |
-| `trans_date_trans_time`     | DateTime | Thời gian giao dịch         |
-| `cc_num`                    | Long     | Số thẻ tín dụng           |
-| `merchant`                  | String   | Tên cửa hàng               |
-| `category`                  | String   | Danh mục (grocery, gas, ...) |
-| `amt`                       | Double   | Số tiền giao dịch          |
-| `gender`                    | String   | Giới tính (M/F)             |
-| `lat`, `long`             | Double   | Vị trí khách hàng         |
-| `merch_lat`, `merch_long` | Double   | Vị trí cửa hàng           |
-| `is_fraud`                  | Integer  | Nhãn gian lận (0/1)         |
+| Column                    | Type     | Description                  |
+| ------------------------- | -------- | ---------------------------- |
+| `trans_date_trans_time`   | DateTime | Thời gian giao dịch          |
+| `cc_num`                  | Long     | Số thẻ tín dụng              |
+| `merchant`                | String   | Tên cửa hàng                 |
+| `category`                | String   | Danh mục (grocery, gas, ...) |
+| `amt`                     | Double   | Số tiền giao dịch            |
+| `gender`                  | String   | Giới tính (M/F)              |
+| `lat`, `long`             | Double   | Vị trí khách hàng            |
+| `merch_lat`, `merch_long` | Double   | Vị trí cửa hàng              |
+| `is_fraud`                | Integer  | Nhãn gian lận (0/1)          |
 
 ### Feature Engineering (15 features)
 
@@ -148,11 +148,9 @@ docker exec -it spark-master bash -c "/opt/spark/bin/spark-submit \
 
 **Bước 2: Silver Layer (Feature engineering)**
 
-```bash
-# Install ML dependencies
-docker exec -it spark-master pip install numpy pandas scikit-learn mlflow boto3 psycopg2-binary
+> **Lưu ý:** Các thư viện ML (numpy, pandas, scikit-learn, mlflow, boto3, psycopg2-binary) đã được cài sẵn trong custom Spark image. Không cần cài thủ công.
 
-# Run feature engineering
+```bash
 docker exec -it spark-master bash -c "/opt/spark/bin/spark-submit \
   --packages io.delta:delta-core_2.12:2.4.0,org.apache.hadoop:hadoop-aws:3.3.4 \
   --conf 'spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension' \
@@ -205,17 +203,17 @@ docker exec -it spark-master bash -c "/opt/spark/bin/spark-submit \
 
 ### 4. Truy cập Services
 
-| Service             | URL                   | Username / Password                                      | Ghi chú                                                 |
-| ------------------- | --------------------- | -------------------------------------------------------- | -------------------------------------------------------- |
-| Spark Master UI     | http://localhost:8080 | Không cần                                              | Monitoring Spark jobs                                    |
-| MinIO Console       | http://localhost:9001 | `minio` / `minio123`                                 | Quản lý buckets và files (Data Lake)                  |
-| Kafka UI            | http://localhost:9002 | Không cần                                              | Xem topics, messages, consumer groups                    |
-| Trino UI            | http://localhost:8085 | Không cần                                              | Query engine monitoring                                  |
+| Service             | URL                   | Username / Password                             | Ghi chú                                           |
+| ------------------- | --------------------- | ----------------------------------------------- | ------------------------------------------------- |
+| Spark Master UI     | http://localhost:8080 | Không cần                                       | Monitoring Spark jobs                             |
+| MinIO Console       | http://localhost:9001 | `minio` / `minio123`                            | Quản lý buckets và files (Data Lake)              |
+| Kafka UI            | http://localhost:9002 | Không cần                                       | Xem topics, messages, consumer groups             |
+| Trino UI            | http://localhost:8085 | Không cần                                       | Query engine monitoring                           |
 | Metabase            | http://localhost:3000 | Tùy chọn (ví dụ:`admin@admin.com` / `admin123`) | BI Dashboard, tự tạo tài khoản admin lần đầu      |
-| Kafka Broker        | localhost:9092        | Không cần                                              | Kafka bootstrap server                                   |
-| PostgreSQL (Source) | localhost:5432        | `postgres` / `postgres`                              | Database `frauddb`                                     |
-| Metabase DB         | Internal              | `postgres` / `postgres`                              | Database `metabase` (không cần truy cập thủ công) |
-| Hive Metastore DB   | Internal (9083)       | `hive` / `hive`                                      | Postgres cho Hive (không expose ra ngoài)              |
+| Kafka Broker        | localhost:9092        | Không cần                                       | Kafka bootstrap server                            |
+| PostgreSQL (Source) | localhost:5432        | `postgres` / `postgres`                         | Database `frauddb`                                |
+| Metabase DB         | Internal              | `postgres` / `postgres`                         | Database `metabase` (không cần truy cập thủ công) |
+| Hive Metastore DB   | Internal (9083)       | `hive` / `hive`                                 | Postgres cho Hive (không expose ra ngoài)         |
 
 > **Lưu ý quan trọng:**
 >
@@ -308,7 +306,7 @@ s3a://lakehouse/
 
 | Model               | AUC    | Accuracy | Fraud Detection Rate |
 | ------------------- | ------ | -------- | -------------------- |
-| Random Forest       | 99.99% | 99.76%   | **83.33%** ⭐  |
+| Random Forest       | 99.99% | 99.76%   | **83.33%** ⭐        |
 | Logistic Regression | 99.93% | 99.53%   | 66.67%               |
 
 ### 8. Troubleshooting
