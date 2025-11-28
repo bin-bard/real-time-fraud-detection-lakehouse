@@ -115,15 +115,81 @@ services:
     networks:
       - data_network
 
-  # Dịch vụ Producer để đẩy dữ liệu vào Kafka
+  # PostgreSQL for Transactions
+  postgres-db:
+    image: postgres:13
+    container_name: postgres-db
+    environment:
+      POSTGRES_DB: transactions
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./config/postgres/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    command: ["postgres", "-c", "wal_level=logical"]
+    networks:
+      - data_network
+
+  # Kafka Connect with Debezium
+  kafka-connect:
+    image: debezium/connect:2.5
+    container_name: kafka-connect
+    depends_on:
+      - kafka
+      - postgres-db
+    ports:
+      - "8083:8083"
+    environment:
+      BOOTSTRAP_SERVERS: kafka:9092
+      GROUP_ID: 1
+      CONFIG_STORAGE_TOPIC: connect_configs
+      OFFSET_STORAGE_TOPIC: connect_offsets
+      STATUS_STORAGE_TOPIC: connect_statuses
+      KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+    networks:
+      - data_network
+
+  # Data Loader - Load CSV to PostgreSQL
+  data-loader:
+    build:
+      context: ./services/data-loader
+    container_name: data-loader
+    depends_on:
+      - postgres-db
+    volumes:
+      - ./data:/data
+    environment:
+      DB_HOST: postgres-db
+      DB_PORT: 5432
+      DB_NAME: transactions
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+    networks:
+      - data_network
+    profiles:
+      - setup
+
+  # Dịch vụ Producer để đẩy dữ liệu vào PostgreSQL (thay vì Kafka)
   data-producer:
     build:
       context: ./services/data-producer
     container_name: data-producer
     depends_on:
-      - kafka
+      - postgres-db
+      - kafka-connect
     volumes:
       - ./data:/data # Mount thư mục data chứa file csv
+    environment:
+      DB_HOST: postgres-db
+      DB_PORT: 5432
+      DB_NAME: transactions
+      DB_USER: postgres
+      DB_PASSWORD: postgres
     networks:
       - data_network
 
@@ -178,6 +244,7 @@ volumes:
   minio_data:
   metastore_db:
   mlflow_db:
+  postgres_data:
 
 networks:
   data_network:
