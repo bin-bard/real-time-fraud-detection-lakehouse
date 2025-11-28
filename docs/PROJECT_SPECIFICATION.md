@@ -84,6 +84,51 @@ Hệ thống được chia thành các tầng (Layers) rõ ràng theo mô hình 
 
 - **Apache Spark (Structured Streaming):** Engine xử lý chính, chạy liên tục 24/7 để chuyển đổi dữ liệu từ Kafka -> Bronze -> Silver -> Gold.
 
+#### 3.3.1. Chiến lược xử lý dữ liệu null
+
+Hệ thống áp dụng chiến lược xử lý null khác nhau cho từng layer theo nguyên tắc Lakehouse:
+
+**Bronze Layer (Raw Data):**
+
+- Giữ nguyên tất cả dữ liệu thô từ CDC (Debezium).
+- Chỉ filter tombstone/delete messages (after = null).
+- Không fillna hay dropna để đảm bảo tính toàn vẹn của raw data.
+
+**Silver Layer (Curated Data):**
+
+_Data Quality Checks:_
+
+1. **Loại bỏ records không thể trace:**
+
+   - `trans_num` (mã giao dịch): NULL → DROP record
+   - `cc_num` (ID khách hàng): NULL → DROP record
+   - `trans_timestamp` (partition key): NULL → DROP record
+   - _Lý do:_ Không thể trace/analyze giao dịch không có ID.
+
+2. **Fill null cho business-critical fields:**
+
+   - `amt` (số tiền): NULL → Fill `0` (giao dịch không hợp lệ nhưng vẫn ghi nhận)
+   - `is_fraud` (label): NULL → Fill `0` (assume normal transaction)
+
+3. **Giữ null có ý nghĩa (semantic null):**
+   - `lat`, `long`, `merch_lat`, `merch_long`: Giữ NULL → Xử lý trong feature engineering
+   - _Lý do:_ NULL = "không có thông tin vị trí" ≠ tọa độ 0,0 (sai thông tin)
+
+_Feature Engineering với Null-Safe Logic:_
+
+- `distance_km`: NULL khi thiếu tọa độ → Fill `-1` (đánh dấu missing, model học pattern)
+- `age`: NULL khi thiếu `dob` → Fill `-1` (unknown age)
+- `gender_encoded`: NULL → Fill `0` (assume female as default)
+- Time features (`hour`, `day_of_week`): Không có null (trans_timestamp đã validated)
+- Amount features: Không có null (amt đã filled 0)
+
+**Gold Layer (Analytics-Ready):**
+
+- Aggregations sử dụng null-safe logic:
+  - `avg(distance_km)`: Chỉ tính khi `distance_km >= 0` (bỏ qua missing values `-1`)
+  - `sum(amt)`, `count(*)`: An toàn vì đã processed ở Silver
+- Đảm bảo không có NULL trong metrics quan trọng cho Dashboard/BI.
+
 ### 3.4. Layer 4: Inference (Dự đoán AI)
 
 - **FastAPI:** Cung cấp API `/predict`. Nhận thông tin giao dịch từ Spark, trả về kết quả dự đoán gian lận.
@@ -109,15 +154,31 @@ _Luồng này chạy liên tục 24/7, do Spark Streaming đảm nhận, Airflow
 1. **Phát sinh giao dịch:** Python Producer `INSERT` 1 dòng vào PostgreSQL (Giả lập giao dịch mới).
 2. **CDC:** Debezium bắt sự kiện Insert -> Gửi bản tin JSON vào Kafka topic `transactions`.
 3. **Spark - Bronze Layer:** Spark đọc từ Kafka, ghi dữ liệu thô vào bảng **Bronze** (Append-only).
+
+   - Filter tombstone messages (Debezium delete events với `after = null`).
+   - Giữ nguyên tất cả null values trong data (raw data integrity).
+   - Parse Debezium `after` field và partition theo `year/month/day`.
+
 4. **Spark - Silver Layer (Quan trọng):**
+
    - Đọc từ dòng mới nhất của Bronze.
+   - **Data Quality Checks:**
+     - Drop records có `trans_num`, `cc_num`, hoặc `trans_timestamp` NULL.
+     - Fill `amt = 0` nếu NULL (giao dịch không hợp lệ).
+     - Fill `is_fraud = 0` nếu NULL (assume normal).
+     - Deduplicate theo `trans_num`.
    - **Feature Engineering:**
-     - Tính `distance_km`: Khoảng cách Haversine giữa chủ thẻ và cửa hàng.
-     - Tính `age`: Tuổi của chủ thẻ.
+     - Tính `distance_km`: Khoảng cách Haversine giữa chủ thẻ và cửa hàng (fill `-1` nếu thiếu tọa độ).
+     - Tính `age`: Tuổi của chủ thẻ (fill `-1` nếu thiếu `dob`).
+     - Tính time features: `hour`, `day_of_week`, `is_weekend`, cyclic encoding.
+     - Tính amount features: `log_amount`, `amount_bin`, risk indicators.
    - **Real-time Inference (Gọi API):** Spark gửi các feature (`amt`, `distance`, `age`...) đến **FastAPI**.
      - _Lưu ý:_ Không gửi cột `is_fraud` (đáp án) cho API.
    - **Lưu kết quả:** Lưu vào bảng **Silver** gồm cả cột `is_fraud` (thực tế từ nguồn - dùng để đối chiếu) và `fraud_prediction` (do API dự đoán - dùng để cảnh báo).
+
 5. **Spark - Gold Layer:** Spark tự động tính toán lại các chỉ số tổng hợp (VD: Số lượng gian lận theo giờ) và cập nhật vào bảng **Gold**.
+   - Null-safe aggregations: `avg(distance_km)` chỉ tính khi `>= 0` (bỏ qua missing `-1`).
+   - Tạo các bảng: daily_summary, hourly_summary, state_summary, category_summary, fraud_patterns.
 
 ### 4.2. Luồng Batch & Bảo trì (Batch Pipeline - Airflow Detail)
 

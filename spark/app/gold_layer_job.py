@@ -39,6 +39,7 @@ def create_fraud_summary():
         df = spark.read.format("delta").load(silver_path)
         
         # Fraud summary by day
+        # Null-safe aggregations: amt đã được fill 0, distance_km có thể là -1 (missing)
         daily_summary = df.groupBy("year", "month", "day") \
             .agg(
                 count("*").alias("total_transactions"),
@@ -49,8 +50,9 @@ def create_fraud_summary():
                 min("amt").alias("min_transaction_amount"),
                 sum("amt").alias("total_amount"),
                 sum(when(col("is_fraud") == "1", col("amt")).otherwise(0)).alias("fraud_amount"),
-                avg("distance_km").alias("avg_distance"),
-                max("distance_km").alias("max_distance")
+                # Chỉ avg distance khi >= 0 (có thông tin vị trí)
+                avg(when(col("distance_km") >= 0, col("distance_km")).otherwise(lit(None))).alias("avg_distance"),
+                max(when(col("distance_km") >= 0, col("distance_km")).otherwise(lit(None))).alias("max_distance")
             ) \
             .withColumn("fraud_rate", col("fraud_transactions") / col("total_transactions")) \
             .withColumn("avg_fraud_amount", 
@@ -67,7 +69,8 @@ def create_fraud_summary():
                 count("*").alias("total_transactions"),
                 sum(when(col("is_fraud") == "1", 1).otherwise(0)).alias("fraud_transactions"),
                 avg("amt").alias("avg_amount"),
-                avg("distance_km").alias("avg_distance")
+                # Null-safe: chỉ avg distance khi >= 0
+                avg(when(col("distance_km") >= 0, col("distance_km")).otherwise(lit(None))).alias("avg_distance")
             ) \
             .withColumn("fraud_rate", col("fraud_transactions") / col("total_transactions"))
         
@@ -95,7 +98,8 @@ def create_fraud_summary():
                 count("*").alias("total_transactions"),
                 sum(when(col("is_fraud") == "1", 1).otherwise(0)).alias("fraud_transactions"),
                 avg("amt").alias("avg_amount"),
-                avg("distance_km").alias("avg_distance")
+                # Null-safe: chỉ avg distance khi >= 0
+                avg(when(col("distance_km") >= 0, col("distance_km")).otherwise(lit(None))).alias("avg_distance")
             ) \
             .withColumn("fraud_rate", col("fraud_transactions") / col("total_transactions")) \
             .orderBy(desc("fraud_transactions"))
@@ -189,7 +193,8 @@ def create_real_time_metrics():
                 count("*").alias("total_transactions_today"),
                 sum(when(col("is_fraud") == "1", 1).otherwise(0)).alias("fraud_detected_today"),
                 avg("amt").alias("avg_amount_today"),
-                avg("distance_km").alias("avg_distance_today"),
+                # Null-safe: chỉ avg distance khi >= 0
+                avg(when(col("distance_km") >= 0, col("distance_km")).otherwise(lit(None))).alias("avg_distance_today"),
                 max("ingestion_time").alias("last_update")
             ) \
             .withColumn("fraud_rate_today", col("fraud_detected_today") / col("total_transactions_today")) \
@@ -212,7 +217,8 @@ def create_real_time_metrics():
             .agg(
                 count("*").alias("fraud_count"),
                 avg("amt").alias("avg_fraud_amount"),
-                avg("distance_km").alias("avg_fraud_distance")
+                # Null-safe: chỉ avg distance khi >= 0
+                avg(when(col("distance_km") >= 0, col("distance_km")).otherwise(lit(None))).alias("avg_fraud_distance")
             ) \
             .orderBy(desc("fraud_count"))
         

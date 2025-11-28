@@ -58,23 +58,38 @@ def feature_engineering(df):
     """
     logger.info("Starting feature engineering...")
     
-    # Bronze đã có trans_timestamp, dùng lại
-    # Parse dob to date (format: MM/DD/YYYY trong CSV gốc, nhưng Bronze đã convert sang yyyy-MM-dd)
-    df = df.withColumn("dob_date", to_date(col("dob"), "yyyy-MM-dd"))
+    # Cast amt from String to Double (Debezium encodes as string)
+    df = df.withColumn("amt", col("amt").cast("double"))
+    
+    # Parse dob: trong Bronze, dob là số ngày kể từ epoch (integer)
+    # Convert to date: epoch day 0 = 1970-01-01
+    df = df.withColumn("dob_date", 
+                       when(col("dob").isNotNull(), 
+                            expr("date_add('1970-01-01', CAST(dob AS INT))"))
+                       .otherwise(lit(None).cast("date")))
     
     # 1. GEOGRAPHIC FEATURES
     # Khoảng cách Haversine giữa customer location và merchant location
+    # Null-safe: chỉ tính khi có đủ 4 tọa độ, otherwise fill -1 để đánh dấu missing
+    # Lý do dùng -1 thay vì null: model có thể học pattern "không có thông tin vị trí"
     df = df.withColumn("distance_km", 
-                       haversine_distance(col("lat"), col("long"), 
-                                         col("merch_lat"), col("merch_long")))
+                       when((col("lat").isNotNull()) & (col("long").isNotNull()) & 
+                            (col("merch_lat").isNotNull()) & (col("merch_long").isNotNull()),
+                            haversine_distance(col("lat"), col("long"), 
+                                             col("merch_lat"), col("merch_long")))
+                       .otherwise(lit(-1.0)))
     
     # 2. DEMOGRAPHIC FEATURES  
     # Tuổi khách hàng
+    # Null-safe: fill -1 nếu không có dob (model học pattern "unknown age")
     df = df.withColumn("age", 
-                       floor(datediff(col("trans_timestamp"), col("dob_date")) / 365.25))
+                       when((col("trans_timestamp").isNotNull()) & (col("dob_date").isNotNull()),
+                            floor(datediff(col("trans_timestamp"), col("dob_date")) / 365.25))
+                       .otherwise(lit(-1)))
     
     # 3. TIME FEATURES
     # Thời gian trong ngày, ngày trong tuần
+    # trans_timestamp đã được đảm bảo not null ở data quality check, không cần xử lý null
     df = df.withColumn("hour", hour(col("trans_timestamp")))
     df = df.withColumn("day_of_week", dayofweek(col("trans_timestamp")))
     df = df.withColumn("is_weekend", 
@@ -85,6 +100,7 @@ def feature_engineering(df):
     df = df.withColumn("hour_cos", cos(col("hour") * 2 * 3.14159 / 24))
     
     # 4. TRANSACTION AMOUNT FEATURES
+    # amt đã được đảm bảo not null (filled 0) ở data quality check
     df = df.withColumn("log_amount", log(col("amt") + 1))
     df = df.withColumn("is_zero_amount", when(col("amt") == 0, 1).otherwise(0))
     df = df.withColumn("is_high_amount", when(col("amt") > 500, 1).otherwise(0))
@@ -99,15 +115,16 @@ def feature_engineering(df):
                        .otherwise(5))
     
     # 5. CATEGORICAL ENCODING
-    # Gender: M=1, F=0
+    # Gender: M=1, F=0, null/other=0 (assume female as default)
     df = df.withColumn("gender_encoded", when(col("gender") == "M", 1).otherwise(0))
     
     # 6. RISK INDICATORS
     # Transaction xa (>100km có thể đáng ngờ)
+    # Null-safe: nếu distance_km = -1 (missing), không đánh dấu là distant
     df = df.withColumn("is_distant_transaction", 
-                       when(col("distance_km") > 100, 1).otherwise(0))
+                       when((col("distance_km") > 100) & (col("distance_km") >= 0), 1).otherwise(0))
     
-    # Transaction đêm khuya (11PM-5AM)
+    # Transaction đêm khuya (11PM-5AM) - hour luôn có giá trị (từ trans_timestamp)
     df = df.withColumn("is_late_night",
                        when((col("hour") >= 23) | (col("hour") <= 5), 1).otherwise(0))
     
@@ -182,11 +199,30 @@ def process_bronze_to_silver():
         # Data quality checks
         logger.info("Performing data quality checks...")
         
-        # Loại bỏ duplicates based on trans_num
+        # 1. Loại bỏ các records không thể trace (trans_num hoặc cc_num null)
+        # Theo spec: trans_num là mã giao dịch, cc_num là ID khách hàng - cả 2 đều critical
+        bronze_df = bronze_df.filter(
+            col("trans_num").isNotNull() & 
+            col("cc_num").isNotNull() &
+            col("trans_timestamp").isNotNull()  # Partition key cũng cần có
+        )
+        logger.info(f"After filtering null critical fields: {bronze_df.count()} records")
+        
+        # 2. Loại bỏ duplicates based on trans_num
         bronze_df = bronze_df.dropDuplicates(["trans_num"])
         logger.info(f"After deduplication: {bronze_df.count()} records")
         
-        # Feature engineering (skip strict null filters to keep all data)
+        # 3. Fill null cho các cột quan trọng nhưng có thể thiếu
+        # amt: số tiền giao dịch - fill 0 nếu null (giao dịch không hợp lệ nhưng vẫn ghi nhận)
+        bronze_df = bronze_df.withColumn("amt", coalesce(col("amt"), lit("0")))
+        
+        # is_fraud: label - fill 0 nếu null (assume normal nếu không có label)
+        bronze_df = bronze_df.withColumn("is_fraud", coalesce(col("is_fraud"), lit("0")))
+        
+        # lat, long, merch_lat, merch_long: vị trí - giữ null, sẽ xử lý trong feature engineering
+        # Lý do: null ở đây có ý nghĩa (không có thông tin vị trí) vs fillna sai thông tin
+        
+        # 4. Feature engineering với null-safe logic
         silver_df = feature_engineering(bronze_df)
         
         # Ghi vào Silver layer
@@ -203,6 +239,7 @@ def process_bronze_to_silver():
         silver_df.write \
             .format("delta") \
             .mode("overwrite") \
+            .partitionBy("year", "month", "day") \
             .option("overwriteSchema", "true") \
             .option("mergeSchema", "true") \
             .save(silver_path)
