@@ -72,6 +72,20 @@ CREATE TABLE IF NOT EXISTS fraud_predictions (
     prediction_time TIMESTAMP DEFAULT NOW()
 );
 
+-- Bảng checkpoint cho data producer (tracking CSV processing progress)
+CREATE TABLE IF NOT EXISTS producer_checkpoint (
+    id INTEGER PRIMARY KEY DEFAULT 1,
+    last_line_processed INTEGER NOT NULL DEFAULT 0,
+    last_trans_num VARCHAR(100),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    CONSTRAINT single_row_check CHECK (id = 1)
+);
+
+-- Insert initial checkpoint record
+INSERT INTO producer_checkpoint (id, last_line_processed) 
+VALUES (1, 0)
+ON CONFLICT (id) DO NOTHING;
+
 -- Grant permissions
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO postgres;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO postgres;

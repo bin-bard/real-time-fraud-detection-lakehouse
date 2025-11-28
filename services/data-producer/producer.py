@@ -14,7 +14,6 @@ POSTGRES_USER = os.environ.get("POSTGRES_USER", "postgres")
 POSTGRES_PASSWORD = os.environ.get("POSTGRES_PASSWORD", "postgres")
 
 DATA_FILE = "/data/fraudTrain.csv"
-CHECKPOINT_FILE = "/data/producer_checkpoint.txt"
 # Hệ số co giãn thời gian để mô phỏng stream nhanh hơn thực tế
 # 0.001 = giao dịch 1 ngày chạy trong vài phút
 TIME_SCALING_FACTOR = 0.001 
@@ -35,19 +34,40 @@ while conn is None:
         print(f"Could not connect to PostgreSQL, retrying in 5 seconds... Error: {e}")
         time.sleep(5)
 
-# --- Đọc checkpoint (vị trí đã xử lý) ---
+# --- Đọc checkpoint từ PostgreSQL ---
 def get_last_checkpoint():
-    """Đọc vị trí dòng cuối cùng đã xử lý từ checkpoint file"""
+    """Đọc vị trí dòng cuối cùng đã xử lý từ PostgreSQL"""
     try:
-        with open(CHECKPOINT_FILE, 'r') as f:
-            return int(f.read().strip())
-    except FileNotFoundError:
-        return 0  # Bắt đầu từ đầu nếu chưa có checkpoint
+        cursor = conn.cursor()
+        cursor.execute("SELECT last_line_processed, last_trans_num FROM producer_checkpoint WHERE id = 1")
+        result = cursor.fetchone()
+        cursor.close()
+        
+        if result:
+            line_num, trans_num = result
+            print(f"📍 Last checkpoint: Line {line_num}, trans_num: {trans_num}")
+            return line_num
+        return 0
+    except Exception as e:
+        print(f"⚠️ Error reading checkpoint: {e}")
+        return 0
 
-def save_checkpoint(line_number):
-    """Lưu vị trí đã xử lý vào checkpoint file"""
-    with open(CHECKPOINT_FILE, 'w') as f:
-        f.write(str(line_number))
+def save_checkpoint(line_number, trans_num=None):
+    """Lưu vị trí đã xử lý vào PostgreSQL"""
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE producer_checkpoint 
+            SET last_line_processed = %s, 
+                last_trans_num = %s,
+                updated_at = NOW()
+            WHERE id = 1
+        """, (line_number, trans_num))
+        conn.commit()
+        cursor.close()
+    except Exception as e:
+        print(f"⚠️ Error saving checkpoint: {e}")
+        conn.rollback()
 
 # --- Đọc và gửi dữ liệu theo thời gian ---
 def simulate_real_time_stream():
@@ -88,7 +108,7 @@ def simulate_real_time_stream():
                     # Commit mỗi 100 transactions
                     if i % 100 == 0:
                         conn.commit()
-                        save_checkpoint(i)
+                        save_checkpoint(i, row.get('trans_num'))
                         print(f"📊 Processed {i} transactions...")
                         
                 except Exception as e:
@@ -103,7 +123,9 @@ def simulate_real_time_stream():
     finally:
         if cursor:
             conn.commit()
-            save_checkpoint(i if 'i' in locals() else start_line)
+            # Save final checkpoint with last trans_num if available
+            final_trans_num = row.get('trans_num') if 'row' in locals() else None
+            save_checkpoint(i if 'i' in locals() else start_line, final_trans_num)
             cursor.close()
         if conn:
             conn.close()
