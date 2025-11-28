@@ -158,6 +158,20 @@ services:
     networks:
       - data_network
 
+  # Debezium Connector Setup - Tự động tạo connector khi start
+  connector-setup:
+    image: curlimages/curl:latest
+    container_name: connector-setup
+    depends_on:
+      - debezium
+      - postgres
+    volumes:
+      - ./deployment/debezium/setup-connector.sh:/setup.sh
+    entrypoint: ["/bin/sh", "/setup.sh"]
+    networks:
+      - data_network
+    restart: "no" # Chỉ chạy 1 lần
+
   # Data Producer - Insert giao dịch vào PostgreSQL
   data-producer:
     build:
@@ -165,6 +179,7 @@ services:
     container_name: data-producer
     depends_on:
       - postgres
+      - connector-setup
     environment:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432

@@ -32,13 +32,13 @@ spark.sparkContext.setLogLevel("WARN")
 print("✅ Spark Session with Delta Lake created successfully.")
 
 # Schema cho dữ liệu Sparkov từ Debezium CDC
-# Debezium gửi dạng: {"payload": {"after": {...}}}
+# Debezium gửi trực tiếp data ở root level (không có payload.after)
 schema = StructType([
-    StructField("trans_date_trans_time", StringType(), True),
-    StructField("cc_num", StringType(), True),  # Long as String to avoid overflow
+    StructField("trans_date_trans_time", StringType(), True),  # Microseconds timestamp as string
+    StructField("cc_num", StringType(), True),
     StructField("merchant", StringType(), True),
     StructField("category", StringType(), True),
-    StructField("amt", DoubleType(), True),
+    StructField("amt", StringType(), True),  # Binary encoded, cần decode
     StructField("first", StringType(), True),
     StructField("last", StringType(), True),
     StructField("gender", StringType(), True),
@@ -50,7 +50,7 @@ schema = StructType([
     StructField("long", DoubleType(), True),
     StructField("city_pop", StringType(), True),
     StructField("job", StringType(), True),
-    StructField("dob", StringType(), True),
+    StructField("dob", StringType(), True),  # Days since epoch as string
     StructField("trans_num", StringType(), True),
     StructField("unix_time", StringType(), True),
     StructField("merch_lat", DoubleType(), True),
@@ -64,16 +64,15 @@ kafka_stream_df = spark \
     .format("kafka") \
     .option("kafka.bootstrap.servers", KAFKA_BROKER) \
     .option("subscribe", KAFKA_TOPIC) \
-    .option("startingOffsets", "latest") \
+    .option("startingOffsets", "earliest") \
     .load()
 
-# Parse Debezium JSON format: {"payload": {"after": {...data...}}}
-# Extract the "after" field which contains the actual transaction data
+# Parse Debezium JSON format (data ở root level, không có payload.after)
+# Convert microseconds timestamp to proper timestamp
 transaction_df = kafka_stream_df.selectExpr("CAST(value AS STRING) as json_string") \
-    .select(get_json_object(col("json_string"), "$.payload.after").alias("payload")) \
-    .select(from_json(col("payload"), schema).alias("data")) \
+    .select(from_json(col("json_string"), schema).alias("data")) \
     .select("data.*") \
-    .withColumn("trans_timestamp", to_timestamp(col("trans_date_trans_time"), "yyyy-MM-dd HH:mm:ss")) \
+    .withColumn("trans_timestamp", (col("trans_date_trans_time").cast("long") / 1000000).cast("timestamp")) \
     .withColumn("ingestion_time", current_timestamp()) \
     .withColumn("year", year(col("trans_timestamp"))) \
     .withColumn("month", month(col("trans_timestamp"))) \
