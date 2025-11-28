@@ -16,9 +16,9 @@ Dự án xây dựng pipeline xử lý dữ liệu end-to-end:
 
 ## Tech Stack
 
-| Component               | Technology               | Mô tả                        |
-| ----------------------- | ------------------------ | ------------------------------ |
-| **Source DB**     | PostgreSQL 14            | OLTP database với CDC enabled |
+| Component         | Technology               | Mô tả                          |
+| ----------------- | ------------------------ | ------------------------------ |
+| **Source DB**     | PostgreSQL 14            | OLTP database với CDC enabled  |
 | **CDC**           | Debezium 2.5             | Change Data Capture connector  |
 | **Streaming**     | Apache Kafka             | Message broker                 |
 | **Processing**    | Apache Spark 3.4.1       | Stream & batch processing      |
@@ -68,17 +68,17 @@ real-time-fraud-detection-lakehouse/
 
 ### Schema chính
 
-| Column                        | Type     | Description                   |
-| ----------------------------- | -------- | ----------------------------- |
-| `trans_date_trans_time`     | DateTime | Thời gian giao dịch         |
-| `cc_num`                    | Long     | Số thẻ tín dụng           |
-| `merchant`                  | String   | Tên cửa hàng               |
-| `category`                  | String   | Danh mục (grocery, gas, ...) |
-| `amt`                       | Double   | Số tiền giao dịch          |
-| `gender`                    | String   | Giới tính (M/F)             |
-| `lat`, `long`             | Double   | Vị trí khách hàng         |
-| `merch_lat`, `merch_long` | Double   | Vị trí cửa hàng           |
-| `is_fraud`                  | Integer  | Nhãn gian lận (0/1)         |
+| Column                    | Type     | Description                  |
+| ------------------------- | -------- | ---------------------------- |
+| `trans_date_trans_time`   | DateTime | Thời gian giao dịch          |
+| `cc_num`                  | Long     | Số thẻ tín dụng              |
+| `merchant`                | String   | Tên cửa hàng                 |
+| `category`                | String   | Danh mục (grocery, gas, ...) |
+| `amt`                     | Double   | Số tiền giao dịch            |
+| `gender`                  | String   | Giới tính (M/F)              |
+| `lat`, `long`             | Double   | Vị trí khách hàng            |
+| `merch_lat`, `merch_long` | Double   | Vị trí cửa hàng              |
+| `is_fraud`                | Integer  | Nhãn gian lận (0/1)          |
 
 ### Feature Engineering (15 features)
 
@@ -169,6 +169,31 @@ docker exec -it spark-master bash -c "/opt/spark/bin/spark-submit \
   --conf 'spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog' \
   /app/gold_layer_job.py"
 ```
+
+**Bước 3b: Gold Layer (Dimensional Model - Star Schema)**
+
+Tạo các bảng dim/fact (dim_customer, dim_merchant, dim_time, dim_location, fact_transactions):
+
+```bash
+docker exec -it spark-master bash -c "/opt/spark/bin/spark-submit \
+  --packages io.delta:delta-core_2.12:2.4.0,org.apache.hadoop:hadoop-aws:3.3.4 \
+  --conf 'spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension' \
+  --conf 'spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog' \
+  /app/gold_layer_dimfact_job.py"
+```
+
+**Bước 3c: Khởi động Metabase để trực quan hóa dữ liệu**
+
+```bash
+docker-compose up -d metabase metabase-db
+```
+
+- Truy cập Metabase tại: http://localhost:3000
+- Lần đầu đăng nhập: tạo tài khoản admin
+- Kết nối Trino/Presto hoặc PostgreSQL để truy vấn dữ liệu Lakehouse
+- Tạo dashboard, biểu đồ từ các bảng dim/fact (gold layer)
+
+> **Lưu ý:** Metabase hỗ trợ auto-refresh dashboard (1-60 phút), phù hợp cho phân tích và báo cáo gần real-time.
 
 **Bước 4: ML Training**
 
@@ -276,7 +301,7 @@ s3a://lakehouse/
 
 | Model               | AUC    | Accuracy | Fraud Detection Rate |
 | ------------------- | ------ | -------- | -------------------- |
-| Random Forest       | 99.99% | 99.76%   | **83.33%** ⭐  |
+| Random Forest       | 99.99% | 99.76%   | **83.33%** ⭐        |
 | Logistic Regression | 99.93% | 99.53%   | 66.67%               |
 
 ### 8. Troubleshooting
