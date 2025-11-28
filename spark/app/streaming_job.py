@@ -1,5 +1,5 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import from_json, col, current_timestamp, year, month, dayofmonth, to_timestamp, get_json_object
+from pyspark.sql.functions import from_json, col, current_timestamp, year, month, dayofmonth, to_timestamp, get_json_object, when, lit
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType
 
 # Cấu hình Kafka - Đọc CDC events từ Debezium
@@ -67,16 +67,23 @@ kafka_stream_df = spark \
     .option("startingOffsets", "earliest") \
     .load()
 
-# Parse Debezium JSON format (data ở root level, không có payload.after)
+# Parse Debezium JSON format (extract from "after" field)
 # Convert microseconds timestamp to proper timestamp
-transaction_df = kafka_stream_df.selectExpr("CAST(value AS STRING) as json_string") \
-    .select(from_json(col("json_string"), schema).alias("data")) \
+parsed_df = kafka_stream_df.selectExpr("CAST(value AS STRING) as json_string") \
+    .select(get_json_object(col("json_string"), "$.after").alias("after_json")) \
+    .filter(col("after_json").isNotNull())  # Filter out tombstone/delete messages
+
+transaction_df = parsed_df \
+    .select(from_json(col("after_json"), schema).alias("data")) \
     .select("data.*") \
     .withColumn("trans_timestamp", (col("trans_date_trans_time").cast("long") / 1000000).cast("timestamp")) \
     .withColumn("ingestion_time", current_timestamp()) \
-    .withColumn("year", year(col("trans_timestamp"))) \
-    .withColumn("month", month(col("trans_timestamp"))) \
-    .withColumn("day", dayofmonth(col("trans_timestamp")))
+    .withColumn("year", 
+                when(col("trans_timestamp").isNotNull(), year(col("trans_timestamp"))).otherwise(lit(None))) \
+    .withColumn("month", 
+                when(col("trans_timestamp").isNotNull(), month(col("trans_timestamp"))).otherwise(lit(None))) \
+    .withColumn("day", 
+                when(col("trans_timestamp").isNotNull(), dayofmonth(col("trans_timestamp"))).otherwise(lit(None)))
 
 # Hàm để ghi vào Bronze layer (Raw data)
 def write_to_bronze(df, batch_id):

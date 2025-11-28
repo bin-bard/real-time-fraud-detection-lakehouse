@@ -214,6 +214,8 @@ docker exec -it spark-master bash -c "/opt/spark/bin/spark-submit \
 | Spark Master UI | http://localhost:8080 | -                   |
 | MinIO Console   | http://localhost:9001 | minio / minio123    |
 | Kafka UI        | http://localhost:9002 | -                   |
+| Trino UI        | http://localhost:8085 | -                   |
+| Metabase        | http://localhost:3000 | (tạo khi lần đầu)   |
 | Kafka           | localhost:9092        | -                   |
 | PostgreSQL      | localhost:5432        | postgres / postgres |
 
