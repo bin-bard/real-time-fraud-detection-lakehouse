@@ -158,19 +158,9 @@ docker exec -it spark-master bash -c "/opt/spark/bin/spark-submit \
   /app/silver_layer_job.py"
 ```
 
-**Bước 3: Gold Layer (Aggregations)**
+**Bước 3: Gold Layer (Dimensional Model - Star Schema)**
 
-```bash
-docker exec -it spark-master bash -c "/opt/spark/bin/spark-submit \
-  --packages io.delta:delta-core_2.12:2.4.0,org.apache.hadoop:hadoop-aws:3.3.4 \
-  --conf 'spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension' \
-  --conf 'spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog' \
-  /app/gold_layer_job.py"
-```
-
-**Bước 3b: Gold Layer (Dimensional Model - Star Schema)**
-
-Tạo các bảng dim/fact (dim_customer, dim_merchant, dim_time, dim_location, fact_transactions):
+Tạo các bảng dimension và fact theo mô hình Star Schema:
 
 ```bash
 docker exec -it spark-master bash -c "/opt/spark/bin/spark-submit \
@@ -180,14 +170,61 @@ docker exec -it spark-master bash -c "/opt/spark/bin/spark-submit \
   /app/gold_layer_dimfact_job.py"
 ```
 
+**Kết quả:** Tạo 5 bảng Delta Lake:
+
+- `dim_customer` - Dimension table (khách hàng)
+- `dim_merchant` - Dimension table (cửa hàng)
+- `dim_time` - Dimension table (thời gian)
+- `dim_location` - Dimension table (địa điểm)
+- `fact_transactions` - Fact table (giao dịch với metrics)
+
+**Bước 3b (Optional): Tạo SQL Views cho Dashboard**
+
+Truy cập Trino và chạy file `sql/gold_layer_views.sql` để tạo 9 views tối ưu:
+
+```bash
+# Access Trino CLI (nếu có)
+docker exec -it trino trino --catalog lakehouse --schema gold
+
+# Hoặc sử dụng Metabase/DBeaver để chạy từng view trong file:
+# - daily_summary
+# - hourly_summary
+# - state_summary
+# - category_summary
+# - amount_summary
+# - latest_metrics
+# - fraud_patterns
+# - merchant_analysis
+# - time_period_analysis
+```
+
 **Bước 3c: Truy cập Metabase để trực quan hóa dữ liệu**
 
 - Truy cập Metabase tại: http://localhost:3000
 - Lần đầu đăng nhập: tạo tài khoản admin
-- Kết nối Trino/Presto hoặc PostgreSQL để truy vấn dữ liệu Lakehouse
-- Tạo dashboard, biểu đồ từ các bảng dim/fact (gold layer)
+- Kết nối Trino/Presto (host: `trino`, port: `8082`, catalog: `lakehouse`, schema: `gold`)
+- Query từ dimensional model:
 
-> **Metabase hỗ trợ auto-refresh dashboard (1-60 phút), phù hợp cho phân tích và báo cáo gần real-time.**
+  ```sql
+  -- Dashboard metrics (sử dụng views)
+  SELECT * FROM lakehouse.gold.daily_summary;
+  SELECT * FROM lakehouse.gold.latest_metrics;
+
+  -- Ad-hoc analysis (sử dụng dim/fact)
+  SELECT f.*, c.first_name, m.merchant
+  FROM lakehouse.gold.fact_transactions f
+  JOIN lakehouse.gold.dim_customer c ON f.customer_key = c.customer_key
+  JOIN lakehouse.gold.dim_merchant m ON f.merchant_key = m.merchant_key
+  WHERE f.is_fraud = '1'
+  ORDER BY f.transaction_amount DESC
+  LIMIT 10;
+  ```
+
+> **Lợi ích Star Schema:**
+>
+> - Dashboard queries nhanh (pre-joined dimensions)
+> - Chatbot linh hoạt (ad-hoc drill-down)
+> - Metabase auto-refresh (1-60 phút) cho monitoring gần real-time
 
 **Bước 4: ML Training**
 

@@ -35,11 +35,21 @@ def setup_minio():
             "bronze/transactions/.keep",
             "silver/transactions/.keep", 
             "silver/features/.keep",
-            "gold/aggregated/.keep",
-            "gold/reports/.keep",
+
+            # Gold Layer - Dimensional Model (Star Schema)
+            # Used by: Chatbot, Metabase Dashboard, BI Tools
+            "gold/dim_customer/.keep",
+            "gold/dim_merchant/.keep",
+            "gold/dim_time/.keep",
+            "gold/dim_location/.keep",
+            "gold/fact_transactions/.keep",
+
+            # Checkpoints for Streaming jobs
             "checkpoints/bronze/.keep",
             "checkpoints/silver/.keep",
             "checkpoints/gold/.keep",
+            
+            # ML Models storage
             "models/fraud_detection/.keep",
             "models/experiments/.keep"
         ]
@@ -59,7 +69,9 @@ def setup_minio():
         print(f"📊 Data Lakehouse structure:")
         print(f"   📦 Bronze Layer: s3a://lakehouse/bronze/")
         print(f"   🥈 Silver Layer: s3a://lakehouse/silver/")
-        print(f"   🥇 Gold Layer:   s3a://lakehouse/gold/")
+        print(f"   🥇 Gold Layer:   s3a://lakehouse/gold/ (Dimensional Model)")
+        print(f"      - Dimensions: dim_customer, dim_merchant, dim_time, dim_location")
+        print(f"      - Fact: fact_transactions")
         print(f"   🚀 Models:       s3a://lakehouse/models/")
         
         return True

@@ -122,12 +122,93 @@ _Feature Engineering với Null-Safe Logic:_
 - Time features (`hour`, `day_of_week`): Không có null (trans_timestamp đã validated)
 - Amount features: Không có null (amt đã filled 0)
 
-**Gold Layer (Analytics-Ready):**
+**Gold Layer (Analytics-Ready - Star Schema):**
 
-- Aggregations sử dụng null-safe logic:
-  - `avg(distance_km)`: Chỉ tính khi `distance_km >= 0` (bỏ qua missing values `-1`)
-  - `sum(amt)`, `count(*)`: An toàn vì đã processed ở Silver
-- Đảm bảo không có NULL trong metrics quan trọng cho Dashboard/BI.
+Gold Layer sử dụng **mô hình Dimensional (Star Schema)** để tối ưu phân tích và truy vấn:
+
+_Dimensional Tables (Chiều):_
+
+1. **dim_customer** - Thông tin khách hàng
+
+   - `customer_key` (PK = cc_num)
+   - Demographic: `first_name`, `last_name`, `gender`, `age`, `dob`, `job`
+   - Location: `customer_city`, `customer_state`, `customer_zip`, `customer_lat`, `customer_long`
+   - `customer_city_population`
+   - `last_updated` (metadata)
+
+2. **dim_merchant** - Thông tin cửa hàng
+
+   - `merchant_key` (PK - surrogate key)
+   - `merchant` (tên cửa hàng)
+   - `merchant_category` (loại hình kinh doanh)
+   - `merchant_lat`, `merchant_long` (vị trí)
+   - `last_updated` (metadata)
+
+3. **dim_time** - Chi tiết thời gian
+
+   - `time_key` (PK - format: yyyyMMddHH)
+   - Date components: `year`, `month`, `day`, `hour`, `minute`
+   - Calendar: `day_of_week`, `week_of_year`, `quarter`
+   - Labels: `day_name`, `month_name`, `time_period` (Morning/Afternoon/Evening/Night)
+   - Flags: `is_weekend`
+
+4. **dim_location** - Chi tiết địa điểm
+   - `location_key` (PK - surrogate key)
+   - `city`, `state`, `zip`
+   - `lat`, `long`
+   - `city_pop` (dân số)
+   - `last_updated` (metadata)
+
+_Fact Table (Sự kiện):_
+
+5. **fact_transactions** - Bảng trung tâm chứa tất cả giao dịch
+   - **Keys:**
+     - `transaction_key` (PK = trans_num)
+     - `customer_key` (FK → dim_customer)
+     - `merchant_key` (FK → dim_merchant)
+     - `time_key` (FK → dim_time)
+   - **Measures (Metrics):**
+     - `transaction_amount` (số tiền)
+     - `is_fraud` (nhãn thực tế)
+     - `fraud_prediction` (dự đoán từ ML model)
+     - `distance_km` (khoảng cách tính toán)
+     - `log_amount`, `amount_bin` (amount features)
+   - **Degenerate Dimensions:**
+     - `transaction_timestamp`, `transaction_category`, `unix_time`
+   - **Risk Indicators (Flags):**
+     - `is_distant_transaction`, `is_late_night`, `is_zero_amount`, `is_high_amount`
+   - **Time Features:**
+     - `transaction_hour`, `transaction_day_of_week`, `is_weekend_transaction`
+     - Cyclic encoding: `hour_sin`, `hour_cos`
+   - **Metadata:**
+     - `ingestion_time`, `fact_created_time`
+
+_SQL Views (Tối ưu truy vấn):_
+
+Trino tạo các **materialized views** trên dimensional model:
+
+- `daily_summary` - Metrics tổng hợp theo ngày
+- `hourly_summary` - Phân tích patterns theo giờ
+- `state_summary` - Phân tích địa lý theo bang
+- `category_summary` - Phân tích theo danh mục
+- `amount_summary` - Phân tích theo khoảng tiền
+- `latest_metrics` - Real-time monitoring metrics
+- `fraud_patterns` - Top fraud patterns
+- `merchant_analysis` - Phân tích merchants
+- `time_period_analysis` - Phân tích theo time period
+
+_Null-Safe Aggregations:_
+
+- Views sử dụng logic: `avg(CASE WHEN distance_km >= 0 THEN distance_km END)` (bỏ qua missing `-1`)
+- `sum(amt)`, `count(*)` an toàn vì đã processed ở Silver
+- Không có NULL trong metrics quan trọng cho Dashboard/BI
+
+_Lợi ích Star Schema:_
+
+- **Truy vấn nhanh:** Joins đơn giản (fact → dims)
+- **Linh hoạt:** Ad-hoc queries cho Chatbot/BI
+- **Hiệu quả:** Pre-joined data, optimized cho OLAP
+- **Mở rộng:** Dễ thêm dimensions/metrics mới
 
 ### 3.4. Layer 4: Inference (Dự đoán AI)
 
@@ -176,9 +257,11 @@ _Luồng này chạy liên tục 24/7, do Spark Streaming đảm nhận, Airflow
      - _Lưu ý:_ Không gửi cột `is_fraud` (đáp án) cho API.
    - **Lưu kết quả:** Lưu vào bảng **Silver** gồm cả cột `is_fraud` (thực tế từ nguồn - dùng để đối chiếu) và `fraud_prediction` (do API dự đoán - dùng để cảnh báo).
 
-5. **Spark - Gold Layer:** Spark tự động tính toán lại các chỉ số tổng hợp (VD: Số lượng gian lận theo giờ) và cập nhật vào bảng **Gold**.
-   - Null-safe aggregations: `avg(distance_km)` chỉ tính khi `>= 0` (bỏ qua missing `-1`).
-   - Tạo các bảng: daily_summary, hourly_summary, state_summary, category_summary, fraud_patterns.
+5. **Spark - Gold Layer (Dimensional Model):** Spark tự động tạo/cập nhật các bảng Dimension và Fact theo mô hình Star Schema:
+   - **Dimension Tables:** `dim_customer`, `dim_merchant`, `dim_time`, `dim_location`
+   - **Fact Table:** `fact_transactions` (chứa tất cả metrics và foreign keys)
+   - Mô hình này phục vụ cả Dashboard (Metabase) và Chatbot (ad-hoc queries qua Trino)
+   - Trino tạo **SQL Views** trên dimensional model để tối ưu queries thường dùng (daily_summary, state_summary, fraud_patterns...)
 
 ### 4.2. Luồng Batch & Bảo trì (Batch Pipeline - Airflow Detail)
 
@@ -199,19 +282,13 @@ _Luồng này chạy định kỳ theo lịch, do **Airflow** kích hoạt._
 - **Tasks:**
   1. **Optimize:** Gộp các file nhỏ (small files) sinh ra do streaming thành file lớn.
   2. **Vacuum:** Xóa vật lý các file dữ liệu cũ không còn dùng đến để giải phóng dung lượng MinIO.
-
-#### **DAG 03: Daily Reporting (Báo cáo ngày)**
-
-- **Lịch chạy:** 23:55 Hàng ngày.
-- **Tasks:**
-  1. **Aggregate:** Tính toán tổng kết ngày (Doanh thu, Tỉ lệ gian lận).
-  2. **Write Gold:** Lưu vào bảng báo cáo tĩnh (Static Report Table) để Dashboard load nhanh hơn.
+  3. **Refresh Views:** Cập nhật metadata cho Trino views (nếu cần).
 
 ### 4.3. Luồng Nghiệp vụ (Business Flow)
 
-1. **Giám sát:** Chuyên viên nhìn Dashboard Metabase, thấy cảnh báo gian lận tăng cao tại khu vực New York.
+1. **Giám sát:** Chuyên viên nhìn Dashboard Metabase (query từ Gold views: `daily_summary`, `latest_metrics`), thấy cảnh báo gian lận tăng cao tại khu vực New York.
 2. **Điều tra:** Chuyên viên mở Chatbot Streamlit, nhập câu hỏi: _"Liệt kê 5 giao dịch gian lận có số tiền lớn nhất tại New York trong 30 phút qua"_.
-3. **Xử lý:** Chatbot (qua Trino) truy vấn dữ liệu từ Silver/Gold -> Trả về danh sách chi tiết.
+3. **Xử lý:** Chatbot (qua Trino) truy vấn dimensional model (`fact_transactions` JOIN `dim_customer`, `dim_merchant`) -> Trả về danh sách chi tiết.
 4. **Quyết định:** Chuyên viên xác minh và thực hiện khóa thẻ trên hệ thống nguồn.
 
 ---
