@@ -252,6 +252,21 @@ services:
       - data_network
     restart: "no"
 
+  # Trino - Distributed SQL Query Engine for Lakehouse
+  trino:
+    image: trinodb/trino:latest
+    container_name: trino
+    ports:
+      - "8085:8080"
+    volumes:
+      - ./config/trino:/etc/trino
+    depends_on:
+      - hive-metastore
+      - minio
+    networks:
+      - data_network
+    restart: unless-stopped
+
   # Metabase - BI & Analytics Dashboard
   metabase:
     image: metabase/metabase:latest
