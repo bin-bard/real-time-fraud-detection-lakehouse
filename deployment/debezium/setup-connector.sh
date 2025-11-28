@@ -43,4 +43,7 @@ echo "✅ Debezium connector created successfully!"
 echo "🔍 Verifying connector status..."
 
 sleep 3
-curl -s http://debezium:8083/connectors/postgres-connector/status | jq '.'
+curl -s http://debezium:8083/connectors/postgres-connector/status
+
+echo ""
+echo "✅ Setup completed! Kafka topic 'postgres.public.transactions' should be available."
