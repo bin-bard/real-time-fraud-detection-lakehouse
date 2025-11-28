@@ -252,11 +252,46 @@ services:
       - data_network
     restart: "no"
 
+  # Metabase - BI & Analytics Dashboard
+  metabase:
+    image: metabase/metabase:latest
+    container_name: metabase
+    ports:
+      - "3000:3000"
+    environment:
+      MB_DB_TYPE: postgres
+      MB_DB_DBNAME: metabase
+      MB_DB_PORT: 5432
+      MB_DB_USER: postgres
+      MB_DB_PASS: postgres
+      MB_DB_HOST: metabase-db
+    depends_on:
+      - metabase-db
+      - trino
+    networks:
+      - data_network
+    restart: unless-stopped
+
+  # Metabase Database
+  metabase-db:
+    image: postgres:14-alpine
+    container_name: metabase-db
+    environment:
+      POSTGRES_DB: metabase
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - metabase_db:/var/lib/postgresql/data
+    networks:
+      - data_network
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   minio_data:
   metastore_db:
   mlflow_db:
+  metabase_db:
 
 networks:
   data_network:
