@@ -49,9 +49,8 @@ def setup_minio():
             "checkpoints/silver/.keep",
             "checkpoints/gold/.keep",
             
-            # ML Models storage
-            "models/fraud_detection/.keep",
-            "models/experiments/.keep"
+            # ML Models storage (MLflow sẽ tự tạo subfolder)
+            "models/.keep"
         ]
         
         print(f"📁 Creating folder structure...")

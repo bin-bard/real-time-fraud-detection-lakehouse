@@ -59,7 +59,10 @@ def feature_engineering(df):
     logger.info("Starting feature engineering...")
     
     # Cast amt from String to Double (Debezium encodes as string)
-    df = df.withColumn("amt", col("amt").cast("double"))
+    # Fill NULL với 0.0 để tránh lỗi trong các phép tính sau
+    df = df.withColumn("amt", 
+                       when(col("amt").isNull(), lit(0.0))
+                       .otherwise(col("amt").cast("double")))
     
     # Parse dob: trong Bronze, dob là số ngày kể từ epoch (integer)
     # Convert to date: epoch day 0 = 1970-01-01
@@ -89,9 +92,13 @@ def feature_engineering(df):
     
     # 3. TIME FEATURES
     # Thời gian trong ngày, ngày trong tuần
-    # trans_timestamp đã được đảm bảo not null ở data quality check, không cần xử lý null
-    df = df.withColumn("hour", hour(col("trans_timestamp")))
-    df = df.withColumn("day_of_week", dayofweek(col("trans_timestamp")))
+    # Xử lý NULL cho trans_timestamp
+    df = df.withColumn("hour", 
+                       when(col("trans_timestamp").isNotNull(), hour(col("trans_timestamp")))
+                       .otherwise(lit(0)))
+    df = df.withColumn("day_of_week", 
+                       when(col("trans_timestamp").isNotNull(), dayofweek(col("trans_timestamp")))
+                       .otherwise(lit(1)))
     df = df.withColumn("is_weekend", 
                        when((col("day_of_week") == 1) | (col("day_of_week") == 7), 1).otherwise(0))
     
@@ -100,7 +107,7 @@ def feature_engineering(df):
     df = df.withColumn("hour_cos", cos(col("hour") * 2 * 3.14159 / 24))
     
     # 4. TRANSACTION AMOUNT FEATURES
-    # amt đã được đảm bảo not null (filled 0) ở data quality check
+    # amt đã được đảm bảo not null ở trên
     df = df.withColumn("log_amount", log(col("amt") + 1))
     df = df.withColumn("is_zero_amount", when(col("amt") == 0, 1).otherwise(0))
     df = df.withColumn("is_high_amount", when(col("amt") > 500, 1).otherwise(0))

@@ -3,7 +3,8 @@ from pyspark.ml.feature import VectorAssembler, StandardScaler
 from pyspark.ml.classification import RandomForestClassifier, LogisticRegression
 from pyspark.ml.evaluation import BinaryClassificationEvaluator, MulticlassClassificationEvaluator
 from pyspark.ml import Pipeline
-from pyspark.sql.functions import col
+from pyspark.sql.functions import col, when, lit, isnan, isnull
+from pyspark.sql.types import DoubleType
 import mlflow
 import mlflow.spark
 import logging
@@ -13,6 +14,7 @@ import os
 os.environ["AWS_ACCESS_KEY_ID"] = "minio"
 os.environ["AWS_SECRET_ACCESS_KEY"] = "minio123"
 os.environ["MLFLOW_S3_ENDPOINT_URL"] = "http://minio:9000"
+os.environ["GIT_PYTHON_REFRESH"] = "quiet"  # Tắt Git warning
 
 # MLflow configuration
 mlflow.set_tracking_uri("http://mlflow:5000")
@@ -46,27 +48,36 @@ def prepare_features(df):
     logger.info("Preparing features for ML...")
     
     # Chọn các features quan trọng cho fraud detection
+    # Chỉ sử dụng các features numeric cơ bản để tránh NULL
     feature_cols = [
         # Transaction features
-        "amt", "log_amount", "amount_bin",
-        "is_zero_amount", "is_high_amount",
+        "amt",
         
-        # Geographic features
-        "distance_km", "is_distant_transaction",
-        
-        # Demographic features
-        "age", "gender_encoded",
-        
-        # Time features
-        "hour", "day_of_week", "is_weekend", "is_late_night",
-        "hour_sin", "hour_cos"
+        # Time features  
+        "hour", "day_of_week",
     ]
     
-    # Vector assembler
+    # Thêm các features khác nếu tồn tại
+    optional_features = [
+        "log_amount", "amount_bin", "is_zero_amount", "is_high_amount",
+        "distance_km", "is_distant_transaction",
+        "age", "gender_encoded",
+        "is_weekend", "is_late_night", "hour_sin", "hour_cos"
+    ]
+    
+    # Kiểm tra columns có tồn tại không
+    available_cols = df.columns
+    for feat in optional_features:
+        if feat in available_cols:
+            feature_cols.append(feat)
+    
+    logger.info(f"Available feature columns: {feature_cols}")
+    
+    # Vector assembler - không skip rows, xử lý NULL trước đó
     assembler = VectorAssembler(
         inputCols=feature_cols,
         outputCol="features_raw",
-        handleInvalid="skip"  # Skip rows with invalid values
+        handleInvalid="keep"  # Keep rows, replace invalid with NaN
     )
     
     # Standard scaler  
@@ -74,19 +85,17 @@ def prepare_features(df):
         inputCol="features_raw",
         outputCol="features",
         withStd=True,
-        withMean=True
+        withMean=False  # Avoid issues with sparse vectors
     )
     
     logger.info(f"Selected {len(feature_cols)} features for training")
-    return assembler, scaler
+    return assembler, scaler, feature_cols
 
-def train_model(algorithm="random_forest"):
+def train_model(spark, algorithm="random_forest"):
     """
     Huấn luyện mô hình fraud detection
+    Nhận SparkSession từ bên ngoài để có thể tái sử dụng
     """
-    spark = create_spark_session()
-    spark.sparkContext.setLogLevel("WARN")
-    
     logger.info(f"🤖 Starting model training with {algorithm}...")
     
     silver_path = "s3a://lakehouse/silver/transactions"
@@ -96,19 +105,52 @@ def train_model(algorithm="random_forest"):
         logger.info("Loading data from Silver layer...")
         df = spark.read.format("delta").load(silver_path)
         
+        # Log available columns
+        logger.info(f"Available columns: {df.columns}")
+        
         # Cast is_fraud to integer for ML
         df = df.withColumn("is_fraud", col("is_fraud").cast("integer"))
         
         # Đổi tên target column
         df = df.withColumnRenamed("is_fraud", "label")
         
-        logger.info(f"Total samples: {df.count()}")
+        # Prepare features first to know which columns we need
+        assembler, scaler, feature_cols = prepare_features(df)
+        
+        # Fill NULL values với 0 cho các feature columns
+        logger.info("Filling NULL values in feature columns...")
+        for feat_col in feature_cols:
+            if feat_col in df.columns:
+                df = df.withColumn(
+                    feat_col, 
+                    when(col(feat_col).isNull() | isnan(col(feat_col)), lit(0.0))
+                    .otherwise(col(feat_col).cast(DoubleType()))
+                )
+        
+        # Drop rows where label is NULL
+        df = df.filter(col("label").isNotNull())
+        
+        total_count = df.count()
+        logger.info(f"Total samples: {total_count}")
+        
+        if total_count == 0:
+            logger.error("No data available for training!")
+            return False
         
         # Check class distribution
         fraud_count = df.filter(col("label") == 1).count()
         normal_count = df.filter(col("label") == 0).count()
         logger.info(f"Fraud samples: {fraud_count}")
         logger.info(f"Normal samples: {normal_count}")
+        
+        if fraud_count == 0:
+            logger.error("No fraud samples found! Cannot train model.")
+            return False
+        
+        if normal_count == 0:
+            logger.error("No normal samples found! Cannot train model.")
+            return False
+            
         logger.info(f"Fraud ratio: {fraud_count/(fraud_count+normal_count)*100:.2f}%")
         
         # Handle class imbalance - undersample normal transactions
@@ -122,16 +164,29 @@ def train_model(algorithm="random_forest"):
         
         # Combine datasets
         df = fraud_df.union(normal_sampled)
-        logger.info(f"Balanced dataset size: {df.count()}")
+        balanced_count = df.count()
+        logger.info(f"Balanced dataset size: {balanced_count}")
+        
+        if balanced_count == 0:
+            logger.error("No data after balancing!")
+            return False
         
         # Split data
         train_df, test_df = df.randomSplit([0.8, 0.2], seed=42)
         
-        logger.info(f"Training samples: {train_df.count()}")
-        logger.info(f"Test samples: {test_df.count()}")
+        train_count = train_df.count()
+        test_count = test_df.count()
         
-        # Prepare features
-        assembler, scaler = prepare_features(df)
+        logger.info(f"Training samples: {train_count}")
+        logger.info(f"Test samples: {test_count}")
+        
+        if train_count == 0 or test_count == 0:
+            logger.error("Training or test set is empty!")
+            return False
+        
+        # Cache training data for better performance
+        train_df = train_df.cache()
+        test_df = test_df.cache()
         
         # Choose algorithm
         if algorithm == "random_forest":
@@ -169,8 +224,9 @@ def train_model(algorithm="random_forest"):
                 mlflow.log_param("elastic_net_param", 0.1)
                 
             mlflow.log_param("algorithm", algorithm)
-            mlflow.log_param("train_samples", train_df.count())
-            mlflow.log_param("test_samples", test_df.count())
+            mlflow.log_param("train_samples", train_count)
+            mlflow.log_param("test_samples", test_count)
+            mlflow.log_param("features", feature_cols)
             
             # Train model
             logger.info("Training model...")
@@ -238,22 +294,27 @@ def train_model(algorithm="random_forest"):
     except Exception as e:
         logger.error(f"❌ Error in model training: {str(e)}")
         return False
-    finally:
-        spark.stop()
+    # Không gọi spark.stop() ở đây - để train_multiple_models quản lý
 
 def train_multiple_models():
     """
     Huấn luyện nhiều models để so sánh
     """
+    # Tạo SparkSession một lần và dùng cho tất cả models
+    spark = create_spark_session()
+    spark.sparkContext.setLogLevel("WARN")
+    
     algorithms = ["random_forest", "logistic_regression"]
     
-    for algorithm in algorithms:
-        logger.info(f"🔄 Training {algorithm} model...")
-        success = train_model(algorithm)
-        if not success:
-            logger.error(f"Failed to train {algorithm}")
-            
-    logger.info("🎉 All models training completed!")
+    try:
+        for algorithm in algorithms:
+            logger.info(f"🔄 Training {algorithm} model...")
+            success = train_model(spark, algorithm)
+            if not success:
+                logger.error(f"Failed to train {algorithm}")
+    finally:
+        spark.stop()
+        logger.info("🎉 All models training completed!")
 
 if __name__ == "__main__":
     train_multiple_models()
