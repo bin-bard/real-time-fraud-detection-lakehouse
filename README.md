@@ -170,12 +170,12 @@ docker exec -it spark-master bash -c "/opt/spark/bin/spark-submit \
 
 ### 4. Truy cập Services
 
-| Service         | URL                   | Credentials      |
-| --------------- | --------------------- | ---------------- |
-| Spark Master UI | http://localhost:8080 | -                |
-| MinIO Console   | http://localhost:9001 | minio / minio123 |
-| Kafka           | localhost:9092        | -                |
-| PostgreSQL      | localhost:5432        | user / password  |
+| Service         | URL                   | Credentials         |
+| --------------- | --------------------- | ------------------- |
+| Spark Master UI | http://localhost:8080 | -                   |
+| MinIO Console   | http://localhost:9001 | minio / minio123    |
+| Kafka           | localhost:9092        | -                   |
+| PostgreSQL      | localhost:5432        | postgres / postgres |
 
 ### 5. Kiểm tra Pipeline
 
@@ -198,11 +198,13 @@ docker exec -it kafka kafka-console-consumer \
 ### Xác minh CDC (INSERT/UPDATE/DELETE) và giá trị trường `amt`
 
 **1. Lấy trans_num thực tế để test:**
+
 ```sql
 SELECT trans_num FROM transactions LIMIT 5;
 ```
 
 **2. Thực hiện các thao tác trên PostgreSQL:**
+
 ```sql
 -- UPDATE
 UPDATE transactions SET amt = amt + 1 WHERE trans_num = '<trans_num thực tế>';
@@ -211,17 +213,22 @@ DELETE FROM transactions WHERE trans_num = '<trans_num thực tế>';
 ```
 
 **3. Kiểm tra message CDC trên Kafka:**
+
 ```bash
 docker exec kafka kafka-console-consumer --bootstrap-server localhost:9092 --topic postgres.public.transactions --from-beginning --max-messages 100000 --timeout-ms 3000 2>$null | Select-String -Pattern "<trans_num thực tế>"
 ```
+
 Kết quả:
+
 - `"op":"c"` = insert, `"op":"u"` = update, `"op":"d"` = delete.
 - Trường `amt` sẽ ở dạng mã hóa Base64 (ví dụ: "amt":"Ark=").
 
 **4. Decode giá trị amt (PowerShell):**
+
 ```powershell
 [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String("Ark="))
 ```
+
 Việc decode này chỉ để xem giá trị thực, không ảnh hưởng pipeline.
 
 **5. Giao diện UI Kafka (tùy chọn):**
