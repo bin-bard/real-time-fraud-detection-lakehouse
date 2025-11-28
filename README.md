@@ -95,33 +95,48 @@ real-time-fraud-detection-lakehouse/
 - Python 3.9+
 - 8GB RAM, 20GB disk space
 
-### 2. Khởi động
+---
+
+### 2. Khởi động hệ thống
+
+#### Cách 1: Tự động (Khuyến nghị)
 
 ```bash
 # Clone repository
 git clone https://github.com/bin-bard/real-time-fraud-detection-lakehouse.git
 cd real-time-fraud-detection-lakehouse
 
-# Start all services (MinIO buckets được tự động setup)
+# Khởi động toàn bộ hệ thống (MinIO buckets, Debezium CDC connector, data-producer đều tự động)
 docker-compose up -d
+```
+
+> **Lưu ý:** Không cần chạy thêm bất kỳ lệnh setup nào khác.
+
+#### Cách 2: Thủ công (tùy chỉnh từng bước)
+
+```bash
+# Clone repository
+git clone https://github.com/bin-bard/real-time-fraud-detection-lakehouse.git
+cd real-time-fraud-detection-lakehouse
+
+# Khởi động các service chính (không tự động tạo bucket, không tự động chạy data-producer)
+docker-compose up -d --scale minio-setup=0 --scale data-producer=0
+
+# Tạo MinIO buckets thủ công
+docker-compose run --rm minio-setup
 
 # Setup Debezium CDC (PowerShell)
 .\deployment\debezium\setup_debezium.ps1
 
-# Setup Debezium CDC (Linux/Mac)
-chmod +x deployment/debezium/setup_debezium.sh
-./deployment/debezium/setup_debezium.sh
-```
-
-### 3. Chạy Data Pipeline
-
-**Bước 1: Start data producer**
-
-```bash
+# Khởi động data-producer thủ công (nếu muốn)
 docker-compose up -d data-producer
 ```
 
-**Bước 2: Bronze Layer (CDC ingestion)**
+---
+
+### 3. Chạy Data Pipeline
+
+**Bước 1: Bronze Layer (CDC ingestion)**
 
 ```bash
 docker exec -it spark-master bash -c "/opt/spark/bin/spark-submit \
@@ -131,7 +146,7 @@ docker exec -it spark-master bash -c "/opt/spark/bin/spark-submit \
   /app/streaming_job.py"
 ```
 
-**Bước 3: Silver Layer (Feature engineering)**
+**Bước 2: Silver Layer (Feature engineering)**
 
 ```bash
 # Install ML dependencies
@@ -145,7 +160,7 @@ docker exec -it spark-master bash -c "/opt/spark/bin/spark-submit \
   /app/silver_layer_job.py"
 ```
 
-**Bước 4: Gold Layer (Aggregations)**
+**Bước 3: Gold Layer (Aggregations)**
 
 ```bash
 docker exec -it spark-master bash -c "/opt/spark/bin/spark-submit \
@@ -155,7 +170,7 @@ docker exec -it spark-master bash -c "/opt/spark/bin/spark-submit \
   /app/gold_layer_job.py"
 ```
 
-**Bước 5: ML Training**
+**Bước 4: ML Training**
 
 ```bash
 docker exec -it spark-master bash -c "/opt/spark/bin/spark-submit \
@@ -164,6 +179,8 @@ docker exec -it spark-master bash -c "/opt/spark/bin/spark-submit \
   --conf 'spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog' \
   /app/ml_training_job.py"
 ```
+
+---
 
 ### 4. Truy cập Services
 
