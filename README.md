@@ -102,11 +102,8 @@ real-time-fraud-detection-lakehouse/
 git clone https://github.com/bin-bard/real-time-fraud-detection-lakehouse.git
 cd real-time-fraud-detection-lakehouse
 
-# Start all services
+# Start all services (MinIO buckets được tự động setup)
 docker-compose up -d
-
-# Setup MinIO buckets
-docker-compose --profile setup run --rm minio-setup
 
 # Setup Debezium CDC (PowerShell)
 .\deployment\debezium\setup_debezium.ps1
@@ -270,7 +267,6 @@ s3a://lakehouse/
 ```bash
 docker-compose down -v
 docker-compose up -d
-docker-compose --profile setup run --rm minio-setup
 ```
 
 **Check logs:**
