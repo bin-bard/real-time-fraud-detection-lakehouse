@@ -16,9 +16,9 @@ Dự án xây dựng pipeline xử lý dữ liệu end-to-end:
 
 ## Tech Stack
 
-| Component         | Technology               | Mô tả                          |
-| ----------------- | ------------------------ | ------------------------------ |
-| **Source DB**     | PostgreSQL 14            | OLTP database với CDC enabled  |
+| Component               | Technology               | Mô tả                        |
+| ----------------------- | ------------------------ | ------------------------------ |
+| **Source DB**     | PostgreSQL 14            | OLTP database với CDC enabled |
 | **CDC**           | Debezium 2.5             | Change Data Capture connector  |
 | **Streaming**     | Apache Kafka             | Message broker                 |
 | **Processing**    | Apache Spark 3.4.1       | Stream & batch processing      |
@@ -68,17 +68,17 @@ real-time-fraud-detection-lakehouse/
 
 ### Schema chính
 
-| Column                    | Type     | Description                  |
-| ------------------------- | -------- | ---------------------------- |
-| `trans_date_trans_time`   | DateTime | Thời gian giao dịch          |
-| `cc_num`                  | Long     | Số thẻ tín dụng              |
-| `merchant`                | String   | Tên cửa hàng                 |
-| `category`                | String   | Danh mục (grocery, gas, ...) |
-| `amt`                     | Double   | Số tiền giao dịch            |
-| `gender`                  | String   | Giới tính (M/F)              |
-| `lat`, `long`             | Double   | Vị trí khách hàng            |
-| `merch_lat`, `merch_long` | Double   | Vị trí cửa hàng              |
-| `is_fraud`                | Integer  | Nhãn gian lận (0/1)          |
+| Column                        | Type     | Description                   |
+| ----------------------------- | -------- | ----------------------------- |
+| `trans_date_trans_time`     | DateTime | Thời gian giao dịch         |
+| `cc_num`                    | Long     | Số thẻ tín dụng           |
+| `merchant`                  | String   | Tên cửa hàng               |
+| `category`                  | String   | Danh mục (grocery, gas, ...) |
+| `amt`                       | Double   | Số tiền giao dịch          |
+| `gender`                    | String   | Giới tính (M/F)             |
+| `lat`, `long`             | Double   | Vị trí khách hàng         |
+| `merch_lat`, `merch_long` | Double   | Vị trí cửa hàng           |
+| `is_fraud`                  | Integer  | Nhãn gian lận (0/1)         |
 
 ### Feature Engineering (15 features)
 
@@ -276,7 +276,7 @@ s3a://lakehouse/
 
 | Model               | AUC    | Accuracy | Fraud Detection Rate |
 | ------------------- | ------ | -------- | -------------------- |
-| Random Forest       | 99.99% | 99.76%   | **83.33%** ⭐        |
+| Random Forest       | 99.99% | 99.76%   | **83.33%** ⭐  |
 | Logistic Regression | 99.93% | 99.53%   | 66.67%               |
 
 ### 8. Troubleshooting
@@ -285,7 +285,7 @@ s3a://lakehouse/
 
 ```bash
 docker-compose down -v
-docker-compose up -d
+docker-compose up -d --build
 ```
 
 **Check logs:**
