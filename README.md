@@ -188,6 +188,7 @@ docker exec -it spark-master bash -c "/opt/spark/bin/spark-submit \
 | --------------- | --------------------- | ------------------- |
 | Spark Master UI | http://localhost:8080 | -                   |
 | MinIO Console   | http://localhost:9001 | minio / minio123    |
+| Kafka UI        | http://localhost:9002 | -                   |
 | Kafka           | localhost:9092        | -                   |
 | PostgreSQL      | localhost:5432        | postgres / postgres |
 
@@ -245,8 +246,9 @@ Kết quả:
 
 Việc decode này chỉ để xem giá trị thực, không ảnh hưởng pipeline.
 
-**5. Giao diện UI Kafka (tùy chọn):**
-Có thể thêm Kafdrop vào docker-compose để xem message qua web UI.
+**5. Xem Kafka messages qua UI:**
+
+Truy cập Kafka UI tại http://localhost:9002 để xem topics, messages, consumer groups qua giao diện web thân thiện.
 
 **Monitor Spark jobs:**
 
