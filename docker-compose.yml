@@ -214,7 +214,9 @@ services:
 
   # MLflow - Machine Learning Lifecycle Management
   mlflow:
-    image: python:3.9-slim
+    build:
+      context: ./services/mlflow
+      dockerfile: Dockerfile
     container_name: mlflow
     ports:
       - "5000:5000"
@@ -224,15 +226,12 @@ services:
       - AWS_ACCESS_KEY_ID=minio
       - AWS_SECRET_ACCESS_KEY=minio123
       - MLFLOW_S3_ENDPOINT_URL=http://minio:9000
-    volumes:
-      - ./deployment:/app
-    working_dir: /app
-    command: bash start.sh
     depends_on:
       - mlflow-db
       - minio
     networks:
       - data_network
+    restart: unless-stopped
 
   # PostgreSQL for MLflow
   mlflow-db:

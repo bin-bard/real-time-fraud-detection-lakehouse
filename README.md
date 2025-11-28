@@ -40,20 +40,25 @@ real-time-fraud-detection-lakehouse/
 ├── data/                      # Sparkov dataset (CSV files)
 ├── database/                  # PostgreSQL initialization
 │   └── init_postgres.sql      # Schema setup (22 columns)
-├── deployment/                # Infrastructure setup
+├── deployment/                # Infrastructure automation
 │   ├── debezium/              # CDC configuration scripts
-│   └── minio/                 # MinIO setup
+│   └── minio/                 # MinIO bucket setup
 ├── docs/                      # Documentation
 │   └── PROJECT_SPECIFICATION.md
 ├── notebooks/                 # Jupyter notebooks (EDA, experiments)
 ├── services/                  # Microservices
 │   ├── data-producer/         # PostgreSQL data simulator
-│   └── fraud-detection-api/   # FastAPI prediction service
-├── spark/app/                 # Spark jobs
-│   ├── streaming_job.py       # Bronze layer (CDC → Delta Lake)
-│   ├── silver_layer_job.py    # Feature engineering (15 features)
-│   ├── gold_layer_job.py      # Aggregations
-│   └── ml_training_job.py     # Model training pipeline
+│   ├── fraud-detection-api/   # FastAPI prediction service
+│   └── mlflow/                # MLflow tracking server
+├── spark/                     # Custom Spark with ML libraries
+│   ├── app/                   # PySpark jobs
+│   │   ├── streaming_job.py   # Bronze layer (CDC → Delta Lake)
+│   │   ├── silver_layer_job.py # Feature engineering (15 features)
+│   │   ├── gold_layer_dimfact_job.py # Star Schema (dimensions/facts)
+│   │   └── ml_training_job.py # Model training pipeline
+│   └── Dockerfile             # Spark + MLflow + ML libraries
+├── sql/                       # SQL views for Gold layer
+│   └── gold_layer_views.sql   # Materialized views for dashboards
 ├── docker-compose.yml         # 11 services orchestration
 └── README.md
 ```
@@ -130,6 +135,17 @@ docker-compose run --rm minio-setup
 
 # Khởi động data-producer thủ công (nếu muốn)
 docker-compose up -d data-producer
+```
+
+#### Rebuild MLflow service (nếu gặp lỗi)
+
+```powershell
+# Rebuild MLflow với cấu trúc mới
+docker-compose build mlflow
+docker-compose up -d mlflow
+
+# Kiểm tra MLflow logs
+docker logs mlflow -f
 ```
 
 ---
@@ -244,9 +260,11 @@ docker exec -it spark-master bash -c "/opt/spark/bin/spark-submit \
 | ------------------- | --------------------- | ----------------------------------------------- | ------------------------------------------------- |
 | Spark Master UI     | http://localhost:8080 | Không cần                                       | Monitoring Spark jobs                             |
 | MinIO Console       | http://localhost:9001 | `minio` / `minio123`                            | Quản lý buckets và files (Data Lake)              |
+| MLflow UI           | http://localhost:5000 | Không cần                                       | ML model tracking & registry                      |
 | Kafka UI            | http://localhost:9002 | Không cần                                       | Xem topics, messages, consumer groups             |
 | Trino UI            | http://localhost:8085 | Không cần                                       | Query engine monitoring                           |
-| Metabase            | http://localhost:3000 | Tùy chọn (ví dụ:`admin@admin.com` / `admin123`) | BI Dashboard, tự tạo tài khoản admin lần đầu      |
+| Metabase            | http://localhost:3000 | Tùy chọn (ví dụ:`admin@admin.com` / `admin123`) | BI Dashboard, tự tạo tài khoản admin lần đầu      |
+| Fraud Detection API | http://localhost:8000 | Không cần                                       | Real-time prediction endpoint                     |
 | Kafka Broker        | localhost:9092        | Không cần                                       | Kafka bootstrap server                            |
 | PostgreSQL (Source) | localhost:5432        | `postgres` / `postgres`                         | Database `frauddb`                                |
 | Metabase DB         | Internal              | `postgres` / `postgres`                         | Database `metabase` (không cần truy cập thủ công) |

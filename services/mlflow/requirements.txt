@@ -1,0 +1,12 @@
+# MLflow server dependencies (matching Spark image versions)
+mlflow==2.8.0
+psycopg2-binary==2.9.9
+boto3==1.28.85
+
+# Additional dependencies for MLflow server
+pymysql==1.1.0
+
+# Optional: Keep same ML versions as Spark (for consistency)
+scikit-learn==1.3.0
+numpy==1.24.3
+pandas==2.0.3
