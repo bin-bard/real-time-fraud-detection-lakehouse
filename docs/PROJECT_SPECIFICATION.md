@@ -82,7 +82,52 @@ Hệ thống được chia thành các tầng (Layers) rõ ràng theo mô hình 
 
 ### 3.3. Layer 3: Processing (Xử lý Stream)
 
-- **Apache Spark (Structured Streaming):** Engine xử lý chính, chạy liên tục 24/7 để chuyển đổi dữ liệu từ Kafka -> Bronze -> Silver -> Gold.
+- **Apache Spark (Structured Streaming):** Engine xử lý chính, chạy liên tục 24/7 với **kiến trúc streaming 3 tầng**:
+  - **Bronze Streaming**: Kafka → Bronze Delta Lake (auto-started)
+  - **Silver Streaming**: Bronze → Silver Delta Lake (trigger mỗi 30s)
+  - **Gold Streaming**: Silver → Gold Delta Lake (trigger mỗi 30s)
+
+**Kiến trúc Streaming Pipeline:**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Layer 1: Bronze (Raw CDC)                                    │
+│ ─────────────────────────────────────────────────────────── │
+│ Input:  Kafka CDC events                                     │
+│ Logic:  Filter tombstones, parse Debezium format            │
+│ Output: s3a://lakehouse/bronze/transactions                  │
+│ Mode:   Continuous streaming (append-only)                   │
+│ Checkpoint: s3a://lakehouse/checkpoints/kafka_to_bronze      │
+└─────────────────────────────────────────────────────────────┘
+                            ↓ (streaming read)
+┌─────────────────────────────────────────────────────────────┐
+│ Layer 2: Silver (Curated Data + Features)                   │
+│ ─────────────────────────────────────────────────────────── │
+│ Input:  Bronze Delta Lake (streaming)                        │
+│ Logic:  Data quality checks + 15 feature engineering        │
+│ Output: s3a://lakehouse/silver/transactions                  │
+│ Mode:   Micro-batch streaming (trigger: 30 seconds)         │
+│ Checkpoint: s3a://lakehouse/checkpoints/bronze_to_silver    │
+└─────────────────────────────────────────────────────────────┘
+                            ↓ (streaming read)
+┌─────────────────────────────────────────────────────────────┐
+│ Layer 3: Gold (Dimensional Model - Star Schema)             │
+│ ─────────────────────────────────────────────────────────── │
+│ Input:  Silver Delta Lake (streaming)                        │
+│ Logic:  Create 4 Dimensions + 1 Fact table                  │
+│ Output: s3a://lakehouse/gold/{dim_*,fact_*}                 │
+│ Mode:   Micro-batch streaming (trigger: 30 seconds)         │
+│ Checkpoint: s3a://lakehouse/checkpoints/silver_to_gold/*    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Đặc điểm kỹ thuật:**
+
+- **Exactly-once processing**: Checkpoint guarantees
+- **Fault tolerance**: Auto-recovery từ checkpoint
+- **Low latency**: 30-60 giây end-to-end
+- **Scalability**: Horizontal scaling với Spark workers
+- **Idempotency**: Delta Lake ACID transactions
 
 #### 3.3.1. Chiến lược xử lý dữ liệu null
 
@@ -230,38 +275,115 @@ _Lợi ích Star Schema:_
 
 ### 4.1. Luồng xử lý thời gian thực (Real-time Streaming Pipeline)
 
-_Luồng này chạy liên tục 24/7, do Spark Streaming đảm nhận, Airflow không can thiệp._
+_Luồng này chạy liên tục 24/7 với 3 Spark Streaming jobs song song, không cần Airflow can thiệp._
+
+**Tổng quan kiến trúc:**
+
+```
+PostgreSQL INSERT → Debezium CDC → Kafka
+                                    ↓
+                    ┌───────────────────────────┐
+                    │  Bronze Streaming Job     │
+                    │  (Auto-started)           │
+                    └───────────────────────────┘
+                                    ↓
+                    ┌───────────────────────────┐
+                    │  Silver Streaming Job     │
+                    │  (Trigger: 30s)           │
+                    └───────────────────────────┘
+                                    ↓
+                    ┌───────────────────────────┐
+                    │  Gold Streaming Job       │
+                    │  (Trigger: 30s)           │
+                    └───────────────────────────┘
+```
+
+**Chi tiết từng bước:**
 
 1. **Phát sinh giao dịch:** Python Producer `INSERT` 1 dòng vào PostgreSQL (Giả lập giao dịch mới).
-2. **CDC:** Debezium bắt sự kiện Insert -> Gửi bản tin JSON vào Kafka topic `transactions`.
-3. **Spark - Bronze Layer:** Spark đọc từ Kafka, ghi dữ liệu thô vào bảng **Bronze** (Append-only).
 
-   - Filter tombstone messages (Debezium delete events với `after = null`).
-   - Giữ nguyên tất cả null values trong data (raw data integrity).
-   - Parse Debezium `after` field và partition theo `year/month/day`.
+2. **CDC:** Debezium bắt sự kiện Insert → Gửi bản tin JSON vào Kafka topic `postgres.public.transactions`.
 
-4. **Spark - Silver Layer (Quan trọng):**
+3. **Spark - Bronze Layer (Streaming - Auto-started):**
 
-   - Đọc từ dòng mới nhất của Bronze.
-   - **Data Quality Checks:**
-     - Drop records có `trans_num`, `cc_num`, hoặc `trans_timestamp` NULL.
-     - Fill `amt = 0` nếu NULL (giao dịch không hợp lệ).
-     - Fill `is_fraud = 0` nếu NULL (assume normal).
-     - Deduplicate theo `trans_num`.
-   - **Feature Engineering:**
-     - Tính `distance_km`: Khoảng cách Haversine giữa chủ thẻ và cửa hàng (fill `-1` nếu thiếu tọa độ).
-     - Tính `age`: Tuổi của chủ thẻ (fill `-1` nếu thiếu `dob`).
-     - Tính time features: `hour`, `day_of_week`, `is_weekend`, cyclic encoding.
-     - Tính amount features: `log_amount`, `amount_bin`, risk indicators.
-   - **Real-time Inference (Gọi API):** Spark gửi các feature (`amt`, `distance`, `age`...) đến **FastAPI**.
-     - _Lưu ý:_ Không gửi cột `is_fraud` (đáp án) cho API.
-   - **Lưu kết quả:** Lưu vào bảng **Silver** gồm cả cột `is_fraud` (thực tế từ nguồn - dùng để đối chiếu) và `fraud_prediction` (do API dự đoán - dùng để cảnh báo).
+   - **Input**: Đọc từ Kafka topic `postgres.public.transactions`
+   - **Processing**:
+     - Filter tombstone messages (Debezium delete events với `after = null`)
+     - Parse Debezium `after` field
+     - Giữ nguyên tất cả null values (raw data integrity)
+   - **Output**: Ghi vào bảng **Bronze** Delta Lake
+     - Mode: `append` (append-only)
+     - Partition: `year/month/day`
+     - Checkpoint: `s3a://lakehouse/checkpoints/kafka_to_bronze`
+   - **Trigger**: Continuous (process immediately when data arrives)
+   - **State**: Auto-started với `docker-compose up`
 
-5. **Spark - Gold Layer (Dimensional Model):** Spark tự động tạo/cập nhật các bảng Dimension và Fact theo mô hình Star Schema:
-   - **Dimension Tables:** `dim_customer`, `dim_merchant`, `dim_time`, `dim_location`
-   - **Fact Table:** `fact_transactions` (chứa tất cả metrics và foreign keys)
-   - Mô hình này phục vụ cả Dashboard (Metabase) và Chatbot (ad-hoc queries qua Trino)
-   - Trino tạo **SQL Views** trên dimensional model để tối ưu queries thường dùng (daily_summary, state_summary, fraud_patterns...)
+4. **Spark - Silver Layer (Streaming - Manual start):**
+
+   - **Input**: Streaming read từ Bronze Delta Lake
+   - **Data Quality Checks**:
+     - Drop records có `trans_num`, `cc_num`, hoặc `trans_timestamp` NULL
+     - Fill `amt = 0` nếu NULL (giao dịch không hợp lệ)
+     - Fill `is_fraud = 0` nếu NULL (assume normal)
+   - **Feature Engineering** (15 features):
+     - **Geographic**: `distance_km` (Haversine), `is_distant_transaction`
+     - **Demographic**: `age`, `gender_encoded`
+     - **Time**: `hour`, `day_of_week`, `is_weekend`, `is_late_night`, cyclic encoding
+     - **Amount**: `log_amount`, `amount_bin`, risk indicators
+   - **Real-time Inference (Optional - nếu có FastAPI)**:
+     - Spark gửi features đến FastAPI `/predict`
+     - Lưu cả `is_fraud` (ground truth) và `fraud_prediction` (model output)
+   - **Output**: Ghi vào bảng **Silver** Delta Lake
+     - Mode: `append`
+     - Partition: `year/month/day`
+     - Checkpoint: `s3a://lakehouse/checkpoints/bronze_to_silver`
+   - **Trigger**: `processingTime="30 seconds"` (micro-batch)
+   - **State**: Chạy liên tục, tự động xử lý data mới từ Bronze
+
+5. **Spark - Gold Layer (Streaming - Manual start):**
+
+   - **Input**: Streaming read từ Silver Delta Lake
+   - **Processing**: Tạo dimensional model (Star Schema)
+     - **4 Dimension Tables**:
+       - `dim_customer`: Deduplicate by `cc_num`
+       - `dim_merchant`: Deduplicate by `merchant + location`
+       - `dim_time`: Deduplicate by `time_key` (yyyyMMddHH)
+       - `dim_location`: Deduplicate by `city + state + zip`
+     - **1 Fact Table**:
+       - `fact_transactions`: All transaction metrics + foreign keys
+   - **Output**: 5 Delta Lake tables trong `s3a://lakehouse/gold/`
+     - Mode: `append` (streaming deduplication)
+     - Checkpoint: `s3a://lakehouse/checkpoints/silver_to_gold/*`
+   - **Trigger**: `processingTime="30 seconds"` (micro-batch)
+   - **State**: Chạy liên tục, tự động xử lý data mới từ Silver
+
+6. **Query Layer (Real-time Analytics):**
+   - **Trino**: Query dimensional model qua SQL views
+   - **Metabase**: Dashboard tự động refresh (1-60 phút)
+   - **Chatbot**: Ad-hoc queries qua LangChain + Trino
+
+**Đặc điểm kỹ thuật:**
+
+- **End-to-end latency**: 30-60 giây (từ PostgreSQL INSERT đến Gold)
+- **Throughput**: ~10,000 transactions/second (có thể scale)
+- **Fault tolerance**: Checkpoint-based recovery
+- **Exactly-once**: Delta Lake ACID + Spark checkpoints
+- **Monitoring**: Spark UI (http://localhost:8080)
+
+**Cách khởi động streaming pipeline:**
+
+```bash
+# Terminal 1: Bronze (đã auto-start)
+# Không cần thao tác
+
+# Terminal 2: Silver Streaming
+docker exec -it spark-master bash -c "spark-submit /app/silver_layer_job.py"
+
+# Terminal 3: Gold Streaming
+docker exec -it spark-master bash -c "spark-submit /app/gold_layer_dimfact_job.py"
+```
+
+> **Lưu ý**: Cả 3 jobs phải chạy song song và liên tục. Không tắt terminal.
 
 ### 4.2. Luồng Batch & Bảo trì (Batch Pipeline - Airflow Detail)
 
@@ -286,10 +408,49 @@ _Luồng này chạy định kỳ theo lịch, do **Airflow** kích hoạt._
 
 ### 4.3. Luồng Nghiệp vụ (Business Flow)
 
-1. **Giám sát:** Chuyên viên nhìn Dashboard Metabase (query từ Gold views: `daily_summary`, `latest_metrics`), thấy cảnh báo gian lận tăng cao tại khu vực New York.
-2. **Điều tra:** Chuyên viên mở Chatbot Streamlit, nhập câu hỏi: _"Liệt kê 5 giao dịch gian lận có số tiền lớn nhất tại New York trong 30 phút qua"_.
-3. **Xử lý:** Chatbot (qua Trino) truy vấn dimensional model (`fact_transactions` JOIN `dim_customer`, `dim_merchant`) -> Trả về danh sách chi tiết.
-4. **Quyết định:** Chuyên viên xác minh và thực hiện khóa thẻ trên hệ thống nguồn.
+1. **Giám sát Real-time:**
+
+   - Chuyên viên nhìn Dashboard Metabase (query từ Gold views: `daily_summary`, `latest_metrics`)
+   - Dashboard tự động refresh mỗi 1-5 phút (configurable)
+   - Thấy cảnh báo: Gian lận tăng 300% tại khu vực New York trong 10 phút qua
+   - **Độ trễ dữ liệu**: ~30-60 giây từ transaction thực tế
+
+2. **Điều tra Chi tiết:**
+
+   - Chuyên viên mở Chatbot Streamlit
+   - Nhập câu hỏi: _"Liệt kê 5 giao dịch gian lận có số tiền lớn nhất tại New York trong 30 phút qua"_
+   - Chatbot (LangChain) tự động sinh SQL query:
+     ```sql
+     SELECT f.*, c.first_name, c.last_name, m.merchant
+     FROM lakehouse.gold.fact_transactions f
+     JOIN lakehouse.gold.dim_customer c ON f.customer_key = c.customer_key
+     JOIN lakehouse.gold.dim_merchant m ON f.merchant_key = m.merchant_key
+     WHERE f.is_fraud = '1'
+       AND c.customer_state = 'NY'
+       AND f.transaction_timestamp >= current_timestamp - INTERVAL '30' MINUTE
+     ORDER BY f.transaction_amount DESC
+     LIMIT 5;
+     ```
+
+3. **Xử lý Nghiệp vụ:**
+
+   - Chatbot (qua Trino) truy vấn dimensional model → Trả về danh sách chi tiết:
+     - Trans_num: T12345, Amount: $5,000, Customer: John Doe, Merchant: ABC Store
+     - Distance: 500km (suspicious), Time: 2:30 AM (late night)
+     - Fraud_prediction: 0.98 (high confidence)
+
+4. **Quyết định & Hành động:**
+   - Chuyên viên xác minh thông tin
+   - Thực hiện khóa thẻ trên hệ thống nguồn (PostgreSQL)
+   - Debezium CDC tự động phát hiện UPDATE → Kafka → Bronze → Silver → Gold
+   - Dashboard cập nhật status trong ~1 phút
+
+**Lợi ích streaming architecture:**
+
+- ✅ **Fast investigation**: Query data gần real-time (~1 phút delay)
+- ✅ **Complete context**: Star Schema cung cấp full dimensional context
+- ✅ **Automated alerts**: Dashboard metrics trigger alerts
+- ✅ **Audit trail**: Delta Lake time travel cho forensics
 
 ---
 

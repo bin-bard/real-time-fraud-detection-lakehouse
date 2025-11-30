@@ -207,123 +207,230 @@ def create_fact_transactions(df, dim_merchant):
     
     return fact_transactions
 
-def process_silver_to_gold_dimfact():
+def process_silver_to_gold_dimfact_streaming():
     """
-    Xử lý dữ liệu từ Silver layer sang Gold layer với mô hình Dimensional
+    Xử lý dữ liệu từ Silver layer sang Gold layer với mô hình Dimensional (STREAMING MODE)
+    Tự động xử lý khi có dữ liệu mới từ Silver
     """
     spark = create_spark_session()
     spark.sparkContext.setLogLevel("WARN")
     
-    logger.info("🥇 Starting Silver to Gold layer (Dim/Fact) processing...")
+    logger.info("🥇 Starting Silver to Gold layer (Dim/Fact) STREAMING processing...")
     
     # Đường dẫn
     silver_path = "s3a://lakehouse/silver/transactions"
     gold_base_path = "s3a://lakehouse/gold"
+    checkpoint_base = "s3a://lakehouse/checkpoints/silver_to_gold"
     
     try:
-        # Đọc dữ liệu từ Silver layer
-        logger.info("Reading from Silver layer...")
-        silver_df = spark.read.format("delta").load(silver_path)
-        
-        record_count = silver_df.count()
-        logger.info(f"Silver data count: {record_count}")
-        
-        if record_count == 0:
-            logger.warning("⚠️ No data in Silver layer to process!")
-            return False
-        
-        # ============================================
-        # TẠO CÁC DIMENSION TABLES
-        # ============================================
-        
-        # 1. Dim Customer
-        dim_customer = create_dim_customer(silver_df)
-        dim_customer_path = f"{gold_base_path}/dim_customer"
-        logger.info(f"Writing dim_customer ({dim_customer.count()} records)...")
-        dim_customer.write \
+        # Đọc dữ liệu từ Silver layer (STREAMING)
+        logger.info("Setting up streaming read from Silver layer...")
+        silver_stream = spark.readStream \
             .format("delta") \
-            .mode("overwrite") \
-            .option("overwriteSchema", "true") \
-            .save(dim_customer_path)
-        logger.info("✅ dim_customer created!")
+            .load(silver_path)
+        
+        logger.info("✅ Streaming source configured")
+        
+        # ============================================
+        # TẠO CÁC DIMENSION TABLES (STREAMING)
+        # ============================================
+        
+        # 1. Dim Customer - Deduplicate by customer_key
+        logger.info("Creating streaming dim_customer...")
+        dim_customer_stream = silver_stream.select(
+            col("cc_num").alias("customer_key"),
+            col("first").alias("first_name"),
+            col("last").alias("last_name"),
+            col("gender"),
+            col("dob").alias("date_of_birth"),
+            col("age"),
+            col("street"),
+            col("city").alias("customer_city"),
+            col("state").alias("customer_state"),
+            col("zip").alias("customer_zip"),
+            col("lat").alias("customer_lat"),
+            col("long").alias("customer_long"),
+            col("city_pop").alias("customer_city_population"),
+            col("job"),
+            current_timestamp().alias("last_updated")
+        ).dropDuplicates(["customer_key"])
+        
+        dim_customer_path = f"{gold_base_path}/dim_customer"
+        query_customer = dim_customer_stream.writeStream \
+            .format("delta") \
+            .outputMode("append") \
+            .option("checkpointLocation", f"{checkpoint_base}/dim_customer") \
+            .trigger(processingTime="30 seconds") \
+            .start(dim_customer_path)
+        logger.info(f"✅ dim_customer streaming started -> {dim_customer_path}")
         
         # 2. Dim Merchant
-        dim_merchant = create_dim_merchant(silver_df)
+        logger.info("Creating streaming dim_merchant...")
+        dim_merchant_stream = silver_stream.select(
+            col("merchant"),
+            col("category").alias("merchant_category"),
+            col("merch_lat").alias("merchant_lat"),
+            col("merch_long").alias("merchant_long")
+        ).dropDuplicates(["merchant", "merchant_lat", "merchant_long"]) \
+        .withColumn("merchant_key", monotonically_increasing_id()) \
+        .select(
+            "merchant_key",
+            "merchant",
+            "merchant_category",
+            "merchant_lat",
+            "merchant_long",
+            current_timestamp().alias("last_updated")
+        )
+        
         dim_merchant_path = f"{gold_base_path}/dim_merchant"
-        logger.info(f"Writing dim_merchant ({dim_merchant.count()} records)...")
-        dim_merchant.write \
+        query_merchant = dim_merchant_stream.writeStream \
             .format("delta") \
-            .mode("overwrite") \
-            .option("overwriteSchema", "true") \
-            .save(dim_merchant_path)
-        logger.info("✅ dim_merchant created!")
+            .outputMode("append") \
+            .option("checkpointLocation", f"{checkpoint_base}/dim_merchant") \
+            .trigger(processingTime="30 seconds") \
+            .start(dim_merchant_path)
+        logger.info(f"✅ dim_merchant streaming started -> {dim_merchant_path}")
         
         # 3. Dim Time
-        dim_time = create_dim_time(silver_df)
+        logger.info("Creating streaming dim_time...")
+        dim_time_stream = silver_stream.select(
+            date_format(col("trans_timestamp"), "yyyyMMddHH").alias("time_key"),
+            col("trans_timestamp").alias("full_timestamp"),
+            year(col("trans_timestamp")).alias("year"),
+            month(col("trans_timestamp")).alias("month"),
+            dayofmonth(col("trans_timestamp")).alias("day"),
+            hour(col("trans_timestamp")).alias("hour"),
+            minute(col("trans_timestamp")).alias("minute"),
+            dayofweek(col("trans_timestamp")).alias("day_of_week"),
+            weekofyear(col("trans_timestamp")).alias("week_of_year"),
+            quarter(col("trans_timestamp")).alias("quarter"),
+            date_format(col("trans_timestamp"), "EEEE").alias("day_name"),
+            date_format(col("trans_timestamp"), "MMMM").alias("month_name"),
+            when((dayofweek(col("trans_timestamp")) == 1) | 
+                 (dayofweek(col("trans_timestamp")) == 7), 1).otherwise(0).alias("is_weekend"),
+            when(hour(col("trans_timestamp")).between(6, 11), "Morning")
+            .when(hour(col("trans_timestamp")).between(12, 17), "Afternoon")
+            .when(hour(col("trans_timestamp")).between(18, 22), "Evening")
+            .otherwise("Night").alias("time_period")
+        ).dropDuplicates(["time_key"])
+        
         dim_time_path = f"{gold_base_path}/dim_time"
-        logger.info(f"Writing dim_time ({dim_time.count()} records)...")
-        dim_time.write \
+        query_time = dim_time_stream.writeStream \
             .format("delta") \
-            .mode("overwrite") \
-            .option("overwriteSchema", "true") \
-            .save(dim_time_path)
-        logger.info("✅ dim_time created!")
+            .outputMode("append") \
+            .option("checkpointLocation", f"{checkpoint_base}/dim_time") \
+            .trigger(processingTime="30 seconds") \
+            .start(dim_time_path)
+        logger.info(f"✅ dim_time streaming started -> {dim_time_path}")
         
         # 4. Dim Location
-        dim_location = create_dim_location(silver_df)
+        logger.info("Creating streaming dim_location...")
+        dim_location_stream = silver_stream.select(
+            col("city"),
+            col("state"),
+            col("zip"),
+            col("lat"),
+            col("long"),
+            col("city_pop")
+        ).dropDuplicates(["city", "state", "zip"]) \
+        .withColumn("location_key", monotonically_increasing_id()) \
+        .select(
+            "location_key",
+            "city",
+            "state",
+            "zip",
+            "lat",
+            "long",
+            "city_pop",
+            current_timestamp().alias("last_updated")
+        )
+        
         dim_location_path = f"{gold_base_path}/dim_location"
-        logger.info(f"Writing dim_location ({dim_location.count()} records)...")
-        dim_location.write \
+        query_location = dim_location_stream.writeStream \
             .format("delta") \
-            .mode("overwrite") \
-            .option("overwriteSchema", "true") \
-            .save(dim_location_path)
-        logger.info("✅ dim_location created!")
+            .outputMode("append") \
+            .option("checkpointLocation", f"{checkpoint_base}/dim_location") \
+            .trigger(processingTime="30 seconds") \
+            .start(dim_location_path)
+        logger.info(f"✅ dim_location streaming started -> {dim_location_path}")
         
         # ============================================
-        # TẠO FACT TABLE
+        # TẠO FACT TABLE (STREAMING)
         # ============================================
         
-        # 5. Fact Transactions
-        fact_transactions = create_fact_transactions(silver_df, dim_merchant)
+        logger.info("Creating streaming fact_transactions...")
+        # Note: Trong streaming, không thể join với dim_merchant được tạo động
+        # Sử dụng merchant name trực tiếp, merchant_key sẽ được tạo sau qua batch job
+        fact_transactions_stream = silver_stream.select(
+            col("trans_num").alias("transaction_key"),
+            col("cc_num").alias("customer_key"),
+            col("merchant"),  # Thay vì merchant_key
+            date_format(col("trans_timestamp"), "yyyyMMddHH").alias("time_key"),
+            col("amt").alias("transaction_amount"),
+            col("is_fraud").alias("is_fraud"),
+            col("trans_timestamp").alias("transaction_timestamp"),
+            col("category").alias("transaction_category"),
+            col("unix_time"),
+            col("distance_km"),
+            col("age").alias("customer_age_at_transaction"),
+            col("log_amount"),
+            col("amount_bin"),
+            col("is_distant_transaction"),
+            col("is_late_night"),
+            col("is_zero_amount"),
+            col("is_high_amount"),
+            col("hour").alias("transaction_hour"),
+            col("day_of_week").alias("transaction_day_of_week"),
+            col("is_weekend").alias("is_weekend_transaction"),
+            col("hour_sin"),
+            col("hour_cos"),
+            col("ingestion_time"),
+            current_timestamp().alias("fact_created_time")
+        )
+        
         fact_transactions_path = f"{gold_base_path}/fact_transactions"
-        logger.info(f"Writing fact_transactions ({fact_transactions.count()} records)...")
-        fact_transactions.write \
+        query_fact = fact_transactions_stream.writeStream \
             .format("delta") \
-            .mode("overwrite") \
-            .option("overwriteSchema", "true") \
-            .save(fact_transactions_path)
-        logger.info("✅ fact_transactions created!")
+            .outputMode("append") \
+            .option("checkpointLocation", f"{checkpoint_base}/fact_transactions") \
+            .trigger(processingTime="30 seconds") \
+            .start(fact_transactions_path)
+        logger.info(f"✅ fact_transactions streaming started -> {fact_transactions_path}")
         
         # ============================================
-        # SUMMARY
+        # WAIT FOR ALL STREAMS
         # ============================================
         
         logger.info("=" * 60)
-        logger.info("✅ Gold layer (Dimensional Model) processing completed!")
-        logger.info(f"📊 Dimension Tables Created:")
-        logger.info(f"   - dim_customer: {dim_customer.count()} records")
-        logger.info(f"   - dim_merchant: {dim_merchant.count()} records")
-        logger.info(f"   - dim_time: {dim_time.count()} records")
-        logger.info(f"   - dim_location: {dim_location.count()} records")
-        logger.info(f"📊 Fact Table Created:")
-        logger.info(f"   - fact_transactions: {fact_transactions.count()} records")
+        logger.info("✅ All Gold layer streaming jobs started!")
+        logger.info(f"📊 Dimension Tables (Streaming):")
+        logger.info(f"   - dim_customer -> {dim_customer_path}")
+        logger.info(f"   - dim_merchant -> {dim_merchant_path}")
+        logger.info(f"   - dim_time -> {dim_time_path}")
+        logger.info(f"   - dim_location -> {dim_location_path}")
+        logger.info(f"📊 Fact Table (Streaming):")
+        logger.info(f"   - fact_transactions -> {fact_transactions_path}")
         logger.info("=" * 60)
+        logger.info("⏳ All streams running... (press Ctrl+C to stop)")
         
+        # Wait for all queries
+        spark.streams.awaitAnyTermination()
+        
+    except KeyboardInterrupt:
+        logger.info("⚠️ Streaming jobs stopped by user")
         return True
-        
     except Exception as e:
-        logger.error(f"❌ Error in Gold layer processing: {str(e)}")
+        logger.error(f"❌ Error in Gold layer streaming: {str(e)}")
         import traceback
         traceback.print_exc()
         return False
-    finally:
-        spark.stop()
+
 
 if __name__ == "__main__":
-    success = process_silver_to_gold_dimfact()
-    if success:
-        print("🎉 Gold layer (Dim/Fact) processing completed successfully!")
-    else:
-        print("❌ Gold layer (Dim/Fact) processing failed!")
+    success = process_silver_to_gold_dimfact_streaming()
+    if not success:
+        print("❌ Gold layer (Dim/Fact) streaming failed!")
         exit(1)
+    else:
+        print("🎉 Gold layer (Dim/Fact) streaming completed!")
+

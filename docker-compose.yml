@@ -311,12 +311,116 @@ services:
       - data_network
     restart: unless-stopped
 
+  # ============================================
+  # STREAMING JOBS (Auto-start)
+  # ============================================
+  
+  # Bronze Layer Streaming (Kafka → Delta Lake)
+  bronze-streaming:
+    build:
+      context: ./spark
+      dockerfile: Dockerfile
+    container_name: bronze-streaming
+    depends_on:
+      - spark-master
+      - kafka
+      - minio
+    environment:
+      - SPARK_LOCAL_DIRS=/tmp/spark
+    volumes:
+      - ./spark/app:/app
+      - bronze_ivy_cache:/home/spark/.ivy2
+    command: >
+      /opt/spark/bin/spark-submit
+      --master spark://spark-master:7077
+      --conf spark.cores.max=3
+      --conf spark.executor.cores=1
+      --conf 'spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension'
+      --conf 'spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog'
+      --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1,io.delta:delta-core_2.12:2.4.0,org.apache.hadoop:hadoop-aws:3.3.4
+      /app/streaming_job.py
+    networks:
+      - data_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "streaming_job.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Silver Layer Streaming (Bronze → Features)
+  silver-streaming:
+    build:
+      context: ./spark
+      dockerfile: Dockerfile
+    container_name: silver-streaming
+    depends_on:
+      - bronze-streaming
+    environment:
+      - SPARK_LOCAL_DIRS=/tmp/spark
+    volumes:
+      - ./spark/app:/app
+      - silver_ivy_cache:/home/spark/.ivy2
+    command: >
+      bash -c "sleep 60 &&
+      /opt/spark/bin/spark-submit
+      --master spark://spark-master:7077
+      --conf spark.cores.max=3
+      --conf spark.executor.cores=1
+      --conf 'spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension'
+      --conf 'spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog'
+      --packages io.delta:delta-core_2.12:2.4.0,org.apache.hadoop:hadoop-aws:3.3.4
+      /app/silver_layer_job.py"
+    networks:
+      - data_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "silver_layer_job.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Gold Layer Streaming (Silver → Star Schema)
+  gold-streaming:
+    build:
+      context: ./spark
+      dockerfile: Dockerfile
+    container_name: gold-streaming
+    depends_on:
+      - silver-streaming
+    environment:
+      - SPARK_LOCAL_DIRS=/tmp/spark
+    volumes:
+      - ./spark/app:/app
+      - gold_ivy_cache:/home/spark/.ivy2
+    command: >
+      bash -c "sleep 90 &&
+      /opt/spark/bin/spark-submit
+      --master spark://spark-master:7077
+      --conf spark.cores.max=3
+      --conf spark.executor.cores=1
+      --conf 'spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension'
+      --conf 'spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog'
+      --packages io.delta:delta-core_2.12:2.4.0,org.apache.hadoop:hadoop-aws:3.3.4
+      /app/gold_layer_dimfact_job.py"
+    networks:
+      - data_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "gold_layer_dimfact_job.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
 volumes:
   postgres_data:
   minio_data:
   metastore_db:
   mlflow_db:
   metabase_db:
+  bronze_ivy_cache:
+  silver_ivy_cache:
+  gold_ivy_cache:
 
 networks:
   data_network:

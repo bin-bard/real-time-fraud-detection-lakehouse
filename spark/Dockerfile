@@ -13,6 +13,12 @@ RUN pip install --no-cache-dir \
     boto3==1.28.85 \
     psycopg2-binary==2.9.9
 
+# Create Ivy cache directory with proper permissions
+RUN mkdir -p /home/spark/.ivy2/cache && \
+    mkdir -p /home/spark/.ivy2/jars && \
+    chown -R 185:185 /home/spark/.ivy2 && \
+    chmod -R 775 /home/spark/.ivy2
+
 # Switch back to spark user
 USER 185
 

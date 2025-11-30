@@ -135,7 +135,7 @@ def feature_engineering(df):
     df = df.withColumn("is_late_night",
                        when((col("hour") >= 23) | (col("hour") <= 5), 1).otherwise(0))
     
-    logger.info(f"After transformations count: {df.count()}")
+    # logger.info(f"After transformations count: {df.count()}")  # Cannot use count() in streaming
     
     # Select ALL columns for Silver layer (original + engineered features)
     df_features = df.select(
@@ -179,92 +179,87 @@ def feature_engineering(df):
         dayofmonth(col("trans_timestamp")).alias("day")
     )
     
-    logger.info(f"After select count: {df_features.count()}")
+    # logger.info(f"After select count: {df_features.count()}")  # Cannot use count() in streaming
     logger.info(f"Feature engineering completed. Total features: {len(df_features.columns)}")
     return df_features
 
-def process_bronze_to_silver():
+def process_bronze_to_silver_streaming():
     """
-    Xử lý dữ liệu từ Bronze layer sang Silver layer
+    Xử lý dữ liệu từ Bronze layer sang Silver layer (STREAMING MODE)
+    Tự động xử lý khi có dữ liệu mới từ Bronze
     """
     spark = create_spark_session()
     spark.sparkContext.setLogLevel("WARN")
     
-    logger.info("🥈 Starting Bronze to Silver layer processing...")
+    logger.info("🥈 Starting Bronze to Silver layer STREAMING processing...")
     
     # Đường dẫn
     bronze_path = "s3a://lakehouse/bronze/transactions"
     silver_path = "s3a://lakehouse/silver/transactions"
+    checkpoint_path = "s3a://lakehouse/checkpoints/bronze_to_silver"
     
     try:
-        # Đọc dữ liệu từ Bronze layer
-        logger.info("Reading from Bronze layer...")
-        bronze_df = spark.read.format("delta").load(bronze_path)
+        # Đọc dữ liệu từ Bronze layer (STREAMING)
+        logger.info("Setting up streaming read from Bronze layer...")
+        bronze_stream = spark.readStream \
+            .format("delta") \
+            .load(bronze_path)
         
-        logger.info(f"Bronze data count: {bronze_df.count()}")
+        logger.info("✅ Streaming source configured")
         
         # Data quality checks
-        logger.info("Performing data quality checks...")
+        logger.info("Applying data quality checks and transformations...")
         
         # 1. Loại bỏ các records không thể trace (trans_num hoặc cc_num null)
         # Theo spec: trans_num là mã giao dịch, cc_num là ID khách hàng - cả 2 đều critical
-        bronze_df = bronze_df.filter(
+        bronze_stream = bronze_stream.filter(
             col("trans_num").isNotNull() & 
             col("cc_num").isNotNull() &
             col("trans_timestamp").isNotNull()  # Partition key cũng cần có
         )
-        logger.info(f"After filtering null critical fields: {bronze_df.count()} records")
         
-        # 2. Loại bỏ duplicates based on trans_num
-        bronze_df = bronze_df.dropDuplicates(["trans_num"])
-        logger.info(f"After deduplication: {bronze_df.count()} records")
-        
-        # 3. Fill null cho các cột quan trọng nhưng có thể thiếu
+        # 2. Fill null cho các cột quan trọng nhưng có thể thiếu
         # amt: số tiền giao dịch - fill 0 nếu null (giao dịch không hợp lệ nhưng vẫn ghi nhận)
-        bronze_df = bronze_df.withColumn("amt", coalesce(col("amt"), lit("0")))
+        bronze_stream = bronze_stream.withColumn("amt", coalesce(col("amt"), lit("0")))
         
         # is_fraud: label - fill 0 nếu null (assume normal nếu không có label)
-        bronze_df = bronze_df.withColumn("is_fraud", coalesce(col("is_fraud"), lit("0")))
+        bronze_stream = bronze_stream.withColumn("is_fraud", coalesce(col("is_fraud"), lit("0")))
         
-        # lat, long, merch_lat, merch_long: vị trí - giữ null, sẽ xử lý trong feature engineering
-        # Lý do: null ở đây có ý nghĩa (không có thông tin vị trí) vs fillna sai thông tin
+        # 3. Feature engineering với null-safe logic
+        silver_stream = feature_engineering(bronze_stream)
         
-        # 4. Feature engineering với null-safe logic
-        silver_df = feature_engineering(bronze_df)
+        # Ghi vào Silver layer (STREAMING)
+        logger.info("Starting streaming write to Silver layer...")
         
-        # Ghi vào Silver layer
-        logger.info("Writing to Silver layer...")
-        
-        # Debug: count before write
-        record_count = silver_df.count()
-        logger.info(f"Records to write: {record_count}")
-        
-        if record_count == 0:
-            logger.error("❌ No records to write to Silver layer!")
-            return False
-        
-        silver_df.write \
+        query = silver_stream.writeStream \
             .format("delta") \
-            .mode("overwrite") \
+            .outputMode("append") \
+            .option("checkpointLocation", checkpoint_path) \
             .partitionBy("year", "month", "day") \
-            .option("overwriteSchema", "true") \
-            .option("mergeSchema", "true") \
-            .save(silver_path)
+            .trigger(processingTime="30 seconds") \
+            .start(silver_path)
             
-        logger.info("✅ Silver layer processing completed successfully!")
-        logger.info(f"📊 Total records written: {record_count}")
-        return True
+        logger.info("✅ Silver layer streaming job started!")
+        logger.info(f"📊 Checkpoint: {checkpoint_path}")
+        logger.info(f"📊 Output: {silver_path}")
+        logger.info("⏳ Waiting for streaming data (press Ctrl+C to stop)...")
         
+        # Chạy liên tục
+        query.awaitTermination()
+        
+    except KeyboardInterrupt:
+        logger.info("⚠️ Streaming job stopped by user")
+        return True
     except Exception as e:
-        logger.error(f"❌ Error in Silver layer processing: {str(e)}")
+        logger.error(f"❌ Error in Silver layer streaming: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return False
-    finally:
-        spark.stop()
 
 if __name__ == "__main__":
-    success = process_bronze_to_silver()
-    if success:
-        print("🎉 Silver layer processing completed successfully!")
-    else:
-        print("❌ Silver layer processing failed!")
+    success = process_bronze_to_silver_streaming()
+    if not success:
+        print("❌ Silver layer streaming failed!")
         exit(1)
+    else:
+        print("🎉 Silver layer streaming completed!")

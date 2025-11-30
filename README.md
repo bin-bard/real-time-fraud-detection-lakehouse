@@ -150,21 +150,73 @@ docker logs mlflow -f
 
 ---
 
-### 3. Chạy Data Pipeline
+### 3. Chạy Data Pipeline (Streaming Architecture)
+
+Hệ thống sử dụng **kiến trúc streaming liên tục** - khi dữ liệu vào Bronze thì tự động được xử lý qua Silver và Gold ngay lập tức.
+
+#### ⚡ **Cách 1: Tự động 100% (Khuyến nghị)**
+
+```bash
+# Chỉ cần 1 lệnh duy nhất - Tất cả tự động!
+docker-compose up -d
+```
+
+✅ **3 streaming jobs sẽ tự động khởi động:**
+- `bronze-streaming`: Kafka → Bronze Delta Lake
+- `silver-streaming`: Bronze → Silver (15 features)
+- `gold-streaming`: Silver → Gold (Star Schema)
+
+**Kiểm tra logs:**
+```bash
+# Xem tất cả streaming jobs
+docker-compose logs -f bronze-streaming silver-streaming gold-streaming
+
+# Hoặc từng job riêng lẻ
+docker logs -f bronze-streaming
+docker logs -f silver-streaming
+docker logs -f gold-streaming
+```
+
+---
+
+#### 🚀 **Cách 2: Script PowerShell (Mở 3 terminals riêng)**
+
+```powershell
+# Chạy script tự động (mở 3 cửa sổ riêng cho mỗi job)
+.\scripts\start-streaming-pipeline.ps1
+```
+
+**Ưu điểm:** Dễ debug, có thể Ctrl+C từng job riêng
+
+---
+
+#### 🔧 **Cách 3: Thủ công (Chỉ khi cần debug chi tiết)**
 
 **Bước 1: Bronze Layer (CDC ingestion)**
 
+Mở terminal đầu tiên và chạy Bronze streaming job:
+
 ```bash
-docker exec -it spark-master bash -c "/opt/spark/bin/spark-submit \
+docker exec spark-master /opt/spark/bin/spark-submit \
   --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1,io.delta:delta-core_2.12:2.4.0,org.apache.hadoop:hadoop-aws:3.3.4 \
   --conf 'spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension' \
   --conf 'spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog' \
-  /app/streaming_job.py"
+  /app/streaming_job.py
 ```
 
-**Bước 2: Silver Layer (Feature engineering)**
+**Kết quả mong đợi:**
+```
+✅ Spark Session with Delta Lake created successfully.
+Bronze layer streaming started. Writing to MinIO...
+Writing batch 0 to Bronze layer...
+Batch 0 written to Bronze successfully.
+```
 
-> **Lưu ý:** Các thư viện ML (numpy, pandas, scikit-learn, mlflow, boto3, psycopg2-binary) đã được cài sẵn trong custom Spark image. Không cần cài thủ công.
+**Không tắt terminal này** - để job chạy liên tục. Chờ thấy ít nhất 5 batches thành công trước khi chạy Silver job.
+
+**Bước 2: Silver Layer (Feature engineering) - Streaming Mode**
+
+Mở terminal mới và chạy:
 
 ```bash
 docker exec -it spark-master bash -c "/opt/spark/bin/spark-submit \
@@ -174,9 +226,15 @@ docker exec -it spark-master bash -c "/opt/spark/bin/spark-submit \
   /app/silver_layer_job.py"
 ```
 
-**Bước 3: Gold Layer (Dimensional Model - Star Schema)**
+**Kết quả:**
+- Job sẽ chạy liên tục, tự động xử lý dữ liệu mới từ Bronze
+- Checkpoint được lưu tại `s3a://lakehouse/checkpoints/bronze_to_silver`
+- Trigger mỗi 30 giây để xử lý micro-batch
+- **Không tắt terminal này** - để job chạy liên tục
 
-Tạo các bảng dimension và fact theo mô hình Star Schema:
+**Bước 3: Gold Layer (Dimensional Model - Star Schema) - Streaming Mode**
+
+Mở terminal mới khác và chạy:
 
 ```bash
 docker exec -it spark-master bash -c "/opt/spark/bin/spark-submit \
@@ -186,13 +244,39 @@ docker exec -it spark-master bash -c "/opt/spark/bin/spark-submit \
   /app/gold_layer_dimfact_job.py"
 ```
 
-**Kết quả:** Tạo 5 bảng Delta Lake:
+**Kết quả:**
+- Job sẽ chạy liên tục, tự động xử lý dữ liệu mới từ Silver
+- Tạo 5 streaming tables song song:
+  - `dim_customer` - Dimension table (khách hàng)
+  - `dim_merchant` - Dimension table (cửa hàng)
+  - `dim_time` - Dimension table (thời gian)
+  - `dim_location` - Dimension table (địa điểm)
+  - `fact_transactions` - Fact table (giao dịch với metrics)
+- Checkpoint được lưu tại `s3a://lakehouse/checkpoints/silver_to_gold/*`
+- Trigger mỗi 30 giây để xử lý micro-batch
+- **Không tắt terminal này** - để job chạy liên tục
 
-- `dim_customer` - Dimension table (khách hàng)
-- `dim_merchant` - Dimension table (cửa hàng)
-- `dim_time` - Dimension table (thời gian)
-- `dim_location` - Dimension table (địa điểm)
-- `fact_transactions` - Fact table (giao dịch với metrics)
+---
+
+**Luồng xử lý hoàn chỉnh (End-to-End):**
+
+```
+PostgreSQL INSERT → Debezium CDC → Kafka 
+  ↓ (Bronze Streaming - Auto)
+Bronze Layer (Delta Lake)
+  ↓ (Silver Streaming - 30s trigger)
+Silver Layer + Feature Engineering (15 features)
+  ↓ (Gold Streaming - 30s trigger)
+Gold Layer (Star Schema: 4 Dims + 1 Fact)
+```
+
+**Ưu điểm kiến trúc streaming:**
+- ✅ **Near Real-time**: Độ trễ ~30-60 giây từ INSERT đến Gold
+- ✅ **Tự động**: Không cần trigger thủ công
+- ✅ **Scalable**: Xử lý được millions records/day
+- ✅ **Fault-tolerant**: Checkpoint đảm bảo exactly-once processing
+
+---
 
 **Bước 3b (Optional): Tạo SQL Views cho Dashboard**
 
@@ -390,15 +474,38 @@ docker logs mlflow
 
 ---
 
-## Architecture
+**Architecture:**
 
 **Data Flow:**
 
 ```
-CSV → PostgreSQL → Debezium CDC → Kafka → Spark Streaming → Delta Lake
-                                            ├── Bronze (raw)
-                                            ├── Silver (15 features)
-                                            └── Gold (aggregations)
+CSV → PostgreSQL → Debezium CDC → Kafka → Spark Streaming (Bronze)
+                                            ↓ (30s micro-batch)
+                                          Silver (15 features)
+                                            ↓ (30s micro-batch)
+                                          Gold (Star Schema)
+```
+
+**Streaming Pipeline (3 tầng liên tục):**
+
+```
+Bronze Layer (Raw CDC)
+  ├── Input: Kafka CDC events
+  ├── Processing: Filter tombstones, parse Debezium format
+  ├── Output: Delta Lake (append-only)
+  └── Checkpoint: s3a://lakehouse/checkpoints/kafka_to_bronze
+
+Silver Layer (Feature Engineering)
+  ├── Input: Bronze Delta Lake (streaming read)
+  ├── Processing: Data quality + 15 features
+  ├── Output: Delta Lake (partitioned by year/month/day)
+  └── Checkpoint: s3a://lakehouse/checkpoints/bronze_to_silver
+
+Gold Layer (Dimensional Model)
+  ├── Input: Silver Delta Lake (streaming read)
+  ├── Processing: Star Schema (4 Dims + 1 Fact)
+  ├── Output: 5 Delta Lake tables
+  └── Checkpoint: s3a://lakehouse/checkpoints/silver_to_gold/*
 ```
 
 **Services (11 containers):**
@@ -410,10 +517,13 @@ CSV → PostgreSQL → Debezium CDC → Kafka → Spark Streaming → Delta Lake
 **Key Features:**
 
 - ✅ Real-time CDC with Debezium
+- ✅ **End-to-end streaming pipeline (Bronze → Silver → Gold)**
+- ✅ **Near real-time processing (~30-60s latency)**
 - ✅ ACID transactions with Delta Lake
+- ✅ Exactly-once processing with checkpoints
 - ✅ 15 engineered features (geographic, demographic, temporal, amount)
 - ✅ 99%+ accuracy fraud detection
-- ✅ Medallion architecture (Bronze/Silver/Gold)
+- ✅ Star Schema for analytics (Medallion architecture)
 
 ---
 
