@@ -63,10 +63,10 @@ def create_dim_merchant(df):
         col("merch_long").alias("merchant_long")
     ).dropDuplicates(["merchant", "merchant_lat", "merchant_long"])
     
-    # Tạo surrogate key
+    # Tạo surrogate key bằng hash của natural key (streaming compatible)
     dim_merchant = dim_merchant.withColumn(
         "merchant_key",
-        monotonically_increasing_id()
+        abs(hash(concat(col("merchant"), col("merchant_lat"), col("merchant_long"))))
     ).select(
         "merchant_key",
         "merchant",
@@ -133,7 +133,7 @@ def create_dim_location(df):
     
     dim_location = dim_location.withColumn(
         "location_key",
-        monotonically_increasing_id()
+        abs(hash(concat(col("city"), col("state"), col("zip"))))
     ).select(
         "location_key",
         "city",
@@ -272,7 +272,7 @@ def process_silver_to_gold_dimfact_streaming():
             col("merch_lat").alias("merchant_lat"),
             col("merch_long").alias("merchant_long")
         ).dropDuplicates(["merchant", "merchant_lat", "merchant_long"]) \
-        .withColumn("merchant_key", monotonically_increasing_id()) \
+        .withColumn("merchant_key", abs(hash(concat(col("merchant"), col("merchant_lat"), col("merchant_long"))))) \
         .select(
             "merchant_key",
             "merchant",
@@ -333,7 +333,7 @@ def process_silver_to_gold_dimfact_streaming():
             col("long"),
             col("city_pop")
         ).dropDuplicates(["city", "state", "zip"]) \
-        .withColumn("location_key", monotonically_increasing_id()) \
+        .withColumn("location_key", abs(hash(concat(col("city"), col("state"), col("zip"))))) \
         .select(
             "location_key",
             "city",

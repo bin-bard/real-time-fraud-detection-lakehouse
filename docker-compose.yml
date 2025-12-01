@@ -333,8 +333,11 @@ services:
     command: >
       /opt/spark/bin/spark-submit
       --master spark://spark-master:7077
-      --conf spark.cores.max=3
+      --conf spark.cores.max=1
       --conf spark.executor.cores=1
+      --conf spark.executor.memory=512m
+      --conf spark.driver.memory=512m
+      --conf spark.sql.shuffle.partitions=2
       --conf 'spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension'
       --conf 'spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog'
       --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1,io.delta:delta-core_2.12:2.4.0,org.apache.hadoop:hadoop-aws:3.3.4
@@ -365,8 +368,11 @@ services:
       bash -c "sleep 60 &&
       /opt/spark/bin/spark-submit
       --master spark://spark-master:7077
-      --conf spark.cores.max=3
+      --conf spark.cores.max=1
       --conf spark.executor.cores=1
+      --conf spark.executor.memory=512m
+      --conf spark.driver.memory=512m
+      --conf spark.sql.shuffle.partitions=2
       --conf 'spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension'
       --conf 'spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog'
       --packages io.delta:delta-core_2.12:2.4.0,org.apache.hadoop:hadoop-aws:3.3.4
@@ -397,8 +403,11 @@ services:
       bash -c "sleep 90 &&
       /opt/spark/bin/spark-submit
       --master spark://spark-master:7077
-      --conf spark.cores.max=3
+      --conf spark.cores.max=1
       --conf spark.executor.cores=1
+      --conf spark.executor.memory=512m
+      --conf spark.driver.memory=512m
+      --conf spark.sql.shuffle.partitions=2
       --conf 'spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension'
       --conf 'spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog'
       --packages io.delta:delta-core_2.12:2.4.0,org.apache.hadoop:hadoop-aws:3.3.4
