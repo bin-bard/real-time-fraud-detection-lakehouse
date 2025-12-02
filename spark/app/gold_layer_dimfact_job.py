@@ -9,7 +9,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def create_spark_session():
-    """Khởi tạo Spark Session với Delta Lake"""
+    """Khởi tạo Spark Session với Delta Lake và Hive Metastore"""
     return SparkSession.builder \
         .appName("GoldLayerDimFactProcessing") \
         .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \

@@ -36,7 +36,7 @@ def haversine_distance(lat1, lon1, lat2, lon2):
     return distance
 
 def create_spark_session():
-    """Khởi tạo Spark Session với Delta Lake"""
+    """Khởi tạo Spark Session với Delta Lake và Hive Metastore"""
     return SparkSession.builder \
         .appName("SilverLayerProcessing") \
         .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \

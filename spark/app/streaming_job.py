@@ -10,7 +10,7 @@ KAFKA_TOPIC = "postgres.public.transactions"  # Debezium topic pattern
 BRONZE_PATH = "s3a://lakehouse/bronze/transactions"
 SILVER_PATH = "s3a://lakehouse/silver/transactions"
 
-# Khởi tạo Spark Session với Delta Lake (không dùng configure_spark_with_delta_pip)
+# Khởi tạo Spark Session với Delta Lake và Hive Metastore
 spark = SparkSession.builder \
     .appName("RealTimeFraudDetection") \
     .config("spark.jars.packages", 
@@ -30,6 +30,7 @@ spark = SparkSession.builder \
 spark.sparkContext.setLogLevel("WARN")
 
 print("✅ Spark Session with Delta Lake created successfully.")
+print("ℹ️ Writing to Delta Lake without Hive Metastore (query via Trino Delta catalog)")
 
 # Schema cho dữ liệu Sparkov từ Debezium CDC
 # Debezium gửi trực tiếp data ở root level (không có payload.after)
@@ -94,6 +95,7 @@ def write_to_bronze(df, batch_id):
         .option("path", BRONZE_PATH) \
         .partitionBy("year", "month", "day") \
         .save()
+    
     print(f"Batch {batch_id} written to Bronze successfully.")
 
 # Ghi stream vào Bronze layer

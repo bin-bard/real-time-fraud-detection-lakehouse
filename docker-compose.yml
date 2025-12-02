@@ -351,75 +351,43 @@ services:
       timeout: 10s
       retries: 3
 
-  # Silver Layer Streaming (Bronze → Features)
-  silver-streaming:
+  # Silver Layer Batch Job (Bronze → Features) - Chạy mỗi 5 phút
+  silver-job:
     build:
       context: ./spark
       dockerfile: Dockerfile
-    container_name: silver-streaming
+    container_name: silver-job
     depends_on:
       - bronze-streaming
     environment:
       - SPARK_LOCAL_DIRS=/tmp/spark
+      - RUN_MODE=batch  # Batch mode
     volumes:
       - ./spark/app:/app
       - silver_ivy_cache:/home/spark/.ivy2
-    command: >
-      bash -c "sleep 60 &&
-      /opt/spark/bin/spark-submit
-      --master spark://spark-master:7077
-      --conf spark.cores.max=1
-      --conf spark.executor.cores=1
-      --conf spark.executor.memory=512m
-      --conf spark.driver.memory=512m
-      --conf spark.sql.shuffle.partitions=2
-      --conf 'spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension'
-      --conf 'spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog'
-      --packages io.delta:delta-core_2.12:2.4.0,org.apache.hadoop:hadoop-aws:3.3.4
-      /app/silver_layer_job.py"
+    command: bash /app/run_silver.sh
     networks:
       - data_network
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "pgrep", "-f", "silver_layer_job.py"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
-  # Gold Layer Streaming (Silver → Star Schema)
-  gold-streaming:
+  # Gold Layer Batch Job (Silver → Star Schema) - Chạy mỗi 5 phút
+  gold-job:
     build:
       context: ./spark
       dockerfile: Dockerfile
-    container_name: gold-streaming
+    container_name: gold-job
     depends_on:
-      - silver-streaming
+      - silver-job
     environment:
       - SPARK_LOCAL_DIRS=/tmp/spark
+      - RUN_MODE=batch  # Batch mode
     volumes:
       - ./spark/app:/app
       - gold_ivy_cache:/home/spark/.ivy2
-    command: >
-      bash -c "sleep 90 &&
-      /opt/spark/bin/spark-submit
-      --master spark://spark-master:7077
-      --conf spark.cores.max=1
-      --conf spark.executor.cores=1
-      --conf spark.executor.memory=512m
-      --conf spark.driver.memory=512m
-      --conf spark.sql.shuffle.partitions=2
-      --conf 'spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension'
-      --conf 'spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog'
-      --packages io.delta:delta-core_2.12:2.4.0,org.apache.hadoop:hadoop-aws:3.3.4
-      /app/gold_layer_dimfact_job.py"
+    command: bash /app/run_gold.sh
     networks:
       - data_network
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "pgrep", "-f", "gold_layer_dimfact_job.py"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
 volumes:
   postgres_data:
