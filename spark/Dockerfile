@@ -4,8 +4,10 @@ FROM apache/spark:3.4.1
 # Switch to root to install packages
 USER root
 
-# Install Python ML dependencies
-RUN pip install --no-cache-dir \
+# Install netcat for healthcheck and Python ML dependencies
+RUN apt-get update && apt-get install -y netcat-openbsd && \
+    rm -rf /var/lib/apt/lists/* && \
+    pip install --no-cache-dir \
     numpy==1.24.3 \
     pandas==2.0.3 \
     scikit-learn==1.3.0 \

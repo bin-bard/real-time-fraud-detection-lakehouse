@@ -24,6 +24,8 @@ Dự án xây dựng pipeline xử lý dữ liệu end-to-end:
 | **Processing**    | Apache Spark 3.4.1       | Stream & batch processing      |
 | **Storage**       | Delta Lake 2.4.0 + MinIO | ACID transactions, time travel |
 | **Metastore**     | Hive Metastore           | Table metadata management      |
+| **Query Engine**  | Trino                    | Distributed SQL query engine   |
+| **Visualization** | Metabase                 | BI dashboards & analytics      |
 | **ML**            | Scikit-learn, MLflow     | Model training & registry      |
 | **API**           | FastAPI                  | Real-time prediction service   |
 | **Orchestration** | Apache Airflow           | Workflow scheduling            |
@@ -157,18 +159,19 @@ docker-compose up -d
 
 ### 3. Kiểm tra Data Pipeline
 
-Pipeline tự động chạy với **3 Spark jobs**:
+Pipeline tự động chạy với **4 services chính**:
 
 #### Kiểm tra logs
 
 ```bash
-# Xem tất cả 3 jobs
-docker-compose logs -f bronze-streaming silver-job gold-job
+# Xem tất cả jobs
+docker-compose logs -f bronze-streaming silver-job gold-job hive-registration
 
 # Hoặc từng job riêng lẻ
 docker logs -f bronze-streaming    # Bronze: CDC → Delta Lake
 docker logs -f silver-job          # Silver: Feature engineering (every 5 min)
 docker logs -f gold-job            # Gold: Star schema (every 5 min)
+docker logs -f hive-registration   # Hive: Auto-register tables (every 1 hour)
 ```
 
 #### Verify thành công
@@ -197,6 +200,22 @@ Found 86427 new records to process
    - dim_time -> s3a://lakehouse/gold/dim_time
    - dim_location -> s3a://lakehouse/gold/dim_location
    - fact_transactions -> s3a://lakehouse/gold/fact_transactions
+```
+
+**Hive registration** (auto, every 1 hour):
+```
+🔧 Hive Metastore Registration Service
+⏳ Waiting for Gold layer to have data...
+🚀 Running Delta to Hive registration...
+✅ Registered bronze.transactions (1,296,675 records)
+✅ Registered silver.transactions (1,296,675 records)
+✅ Registered gold.dim_customer (997 records)
+✅ Registered gold.dim_merchant (693 records)
+✅ Registered gold.dim_time (17,520 records)
+✅ Registered gold.dim_location (956 records)
+✅ Registered gold.fact_transactions (1,296,675 records)
+✅ Registration completed successfully!
+♻️  Entering maintenance loop (re-register every 1 hour)...
 ```
 
 #### Kiểm tra CPU usage
@@ -403,7 +422,76 @@ Truy cập Kafka UI tại http://localhost:9002 để xem topics, messages, cons
 
 ---
 
-### 7. Troubleshooting & Maintenance
+### 7. Query Data với Trino + Metabase
+
+#### Kiểm tra Tables đã được Register
+
+Hệ thống tự động register Delta Lake tables vào Hive Metastore mỗi giờ:
+
+```bash
+# Kiểm tra registration logs
+docker logs hive-registration --tail 30
+
+# Verify tables trong Trino
+docker exec trino trino --server localhost:8081 --execute "SHOW TABLES FROM delta.gold"
+```
+
+**Output mong đợi:**
+```
+"dim_customer"
+"dim_location"
+"dim_merchant"
+"dim_time"
+"fact_transactions"
+```
+
+#### Kết nối Metabase
+
+1. **Truy cập Metabase:** http://localhost:3000
+2. **First-time setup:** Tạo tài khoản admin
+3. **Add Database:**
+   - Database type: **Trino**
+   - Display name: `Fraud Detection Lakehouse`
+   - Host: `trino`
+   - Port: `8081`
+   - Catalog: `delta`
+   - Database: `gold`
+   - Username/Password: (để trống)
+4. **Save** → Metabase sẽ sync metadata
+
+#### Sample Queries
+
+```sql
+-- Fraud rate by merchant category
+SELECT 
+  dm.category,
+  COUNT(*) as total_transactions,
+  SUM(CASE WHEN ft.is_fraud = true THEN 1 ELSE 0 END) as fraud_count,
+  ROUND(100.0 * SUM(CASE WHEN ft.is_fraud = true THEN 1 ELSE 0 END) / COUNT(*), 2) as fraud_rate
+FROM delta.gold.fact_transactions ft
+JOIN delta.gold.dim_merchant dm ON ft.merchant_key = dm.merchant_key
+GROUP BY dm.category
+ORDER BY fraud_rate DESC;
+
+-- Geographic fraud distribution
+SELECT 
+  dl.state,
+  COUNT(*) as total_transactions,
+  SUM(CASE WHEN ft.is_fraud = true THEN 1 ELSE 0 END) as fraud_count
+FROM delta.gold.fact_transactions ft
+JOIN delta.gold.dim_location dl ON ft.location_key = dl.location_key
+GROUP BY dl.state
+ORDER BY fraud_count DESC
+LIMIT 10;
+```
+
+**📖 Chi tiết:**
+- **Setup guide:** [`docs/METABASE_SETUP.md`](docs/METABASE_SETUP.md) - Connection settings & 7 sample queries
+- **Troubleshooting:** [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) - Giải quyết các vấn đề thường gặp
+
+---
+
+### 8. Troubleshooting & Maintenance
 
 #### Reset toàn bộ hệ thống
 
@@ -479,7 +567,8 @@ Bronze Delta Lake (s3a://lakehouse/bronze/)
 Silver Delta Lake (40 features, s3a://lakehouse/silver/)
     ↓ Gold Batch (Every 5 minutes, spike to ~100% CPU then sleep)
 Gold Delta Lake (5 tables, s3a://lakehouse/gold/)
-    ↓ Trino Delta Catalog (Direct query, no Hive Metastore)
+    ↓ Hive Metastore (Auto-registration every 1 hour)
+    ↓ Trino Query Engine (Delta Catalog via Hive Metastore)
 Metabase Dashboard / Analytics
 ```
 
@@ -502,13 +591,14 @@ Metabase Dashboard / Analytics
 | ------------------- | --------------------- | ----------------------- | ---------------------------------------- |
 | Spark Master UI     | http://localhost:8080 | None                    | Monitor Spark jobs & resource allocation |
 | MinIO Console       | http://localhost:9001 | minio / minio123        | S3-compatible Data Lake storage          |
+| Trino UI            | http://localhost:8085 | None                    | Distributed SQL query engine             |
+| Metabase            | http://localhost:3000 | (setup on first visit)  | BI Dashboard & visualization             |
 | MLflow UI           | http://localhost:5000 | None                    | ML model tracking & registry             |
 | Kafka UI            | http://localhost:9002 | None                    | Kafka topics & messages monitoring       |
-| Trino UI            | http://localhost:8085 | None                    | Distributed SQL query engine             |
-| Metabase            | http://localhost:3000 | admin@admin.com / admin | BI Dashboard & visualization             |
 | Fraud Detection API | http://localhost:8000 | None                    | Real-time prediction endpoint (future)   |
 | Kafka Broker        | localhost:9092        | None                    | Message streaming platform               |
 | PostgreSQL          | localhost:5432        | postgres / postgres     | Source database (frauddb)                |
+| Hive Metastore      | localhost:9083        | None (Thrift)           | Table metadata store for Trino           |
 
 ---
 
@@ -521,7 +611,9 @@ Metabase Dashboard / Analytics
 ✅ **Schema Evolution**: Support for ancient dates with LEGACY mode  
 ✅ **40 Features**: Geographic, demographic, time-based, amount-based  
 ✅ **Star Schema**: 4 dimensions + 1 fact table for analytics  
-✅ **Direct Trino Query**: No Hive Metastore dependency  
+✅ **Trino Query Engine**: Distributed SQL with Hive Metastore integration  
+ **Auto Registration**: Tables auto-register to Metastore every hour  
+ **Metabase Ready**: Pre-configured for BI dashboards and visualizations  
 ✅ **60% CPU Reduction**: From 300%+ to ~195% by moving to batch processing  
 
 ---
@@ -534,3 +626,11 @@ Xem file `docs/PROJECT_SPECIFICATION.md` để hiểu rõ:
 - Yêu cầu nghiệp vụ
 - Data flow và processing layers
 - ML pipeline specifications
+
+
+##  Additional Documentation
+
+- **[METABASE_SETUP.md](docs/METABASE_SETUP.md)** - Complete Metabase setup guide with 7 sample fraud detection queries
+- **[TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** - Detailed solutions for 6 major issues encountered during setup
+- **[PROJECT_SPECIFICATION.md](docs/PROJECT_SPECIFICATION.md)** - Full architecture specifications and requirements
+
