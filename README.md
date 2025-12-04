@@ -1,31 +1,33 @@
-# Real-Time Fraud Detection Lakehouse
+# Hệ thống Phát hiện Gian lận Thời gian Thực - Data Lakehouse
 
 Hệ thống Data Lakehouse phát hiện gian lận thẻ tín dụng theo thời gian thực sử dụng **Delta Lake** + **Apache Spark** + **Trino**.
 
+![Kiến trúc hệ thống](docs/architecture.png)
+
 ## 🎯 Tổng quan
 
-Dự án xây dựng pipeline xử lý dữ liệu end-to-end từ CDC (Change Data Capture) đến Analytics Dashboard:
+Dự án xây dựng pipeline xử lý dữ liệu end-to-end từ CDC (Change Data Capture) đến Dashboard phân tích:
 
-- **Real-time CDC**: PostgreSQL → Debezium → Kafka → Bronze (Streaming)
-- **Batch ETL**: Bronze → Silver → Gold (Airflow mỗi 5 phút)
-- **ML Training**: RandomForest + LogisticRegression (Airflow hàng ngày 2 AM)
-- **Analytics**: Trino + Metabase Dashboard
+- **CDC Thời gian thực**: PostgreSQL → Debezium → Kafka → Bronze (Streaming)
+- **ETL Batch**: Bronze → Silver → Gold (Airflow mỗi 5 phút)
+- **Huấn luyện ML**: RandomForest + LogisticRegression (Airflow hàng ngày 2 giờ sáng)
+- **Phân tích**: Trino + Metabase Dashboard
 
-## 🛠️ Tech Stack
+## 🛠️ Công nghệ sử dụng
 
-| Component         | Technology           | Port       | Mô tả                           |
-| ----------------- | -------------------- | ---------- | ------------------------------- |
-| **Source DB**     | PostgreSQL 14        | 5432       | OLTP database với CDC enabled   |
-| **CDC**           | Debezium 2.5         | 8083       | Change Data Capture             |
-| **Streaming**     | Apache Kafka         | 9092       | Message broker                  |
-| **Processing**    | Spark 3.4.1          | 8080       | Stream & batch processing       |
-| **Storage**       | Delta Lake + MinIO   | 9000, 9001 | ACID lakehouse                  |
-| **Metastore**     | Hive Metastore 3.1.3 | 9083       | Metadata cache (optional)       |
-| **Query**         | Trino                | 8085       | Distributed SQL engine          |
-| **Orchestration** | Airflow 2.8.0        | 8081       | Workflow scheduling             |
-| **ML Tracking**   | MLflow 2.8.0         | 5000       | Model tracking                  |
-| **Visualization** | Metabase             | 3000       | BI dashboard                    |
-| **API**           | FastAPI              | 8000       | Real-time prediction (optional) |
+| Thành phần        | Công nghệ            | Cổng       | Mô tả                             |
+| ----------------- | -------------------- | ---------- | --------------------------------- |
+| **Cơ sở dữ liệu** | PostgreSQL 14        | 5432       | OLTP database với CDC enabled     |
+| **CDC**           | Debezium 2.5         | 8083       | Change Data Capture               |
+| **Streaming**     | Apache Kafka         | 9092       | Message broker                    |
+| **Xử lý**         | Spark 3.4.1          | 8080       | Xử lý stream & batch              |
+| **Lưu trữ**       | Delta Lake + MinIO   | 9000, 9001 | ACID lakehouse                    |
+| **Metastore**     | Hive Metastore 3.1.3 | 9083       | Cache metadata (tùy chọn)         |
+| **Truy vấn**      | Trino                | 8085       | Công cụ SQL phân tán              |
+| **Điều phối**     | Airflow 2.8.0        | 8081       | Lập lịch workflow                 |
+| **Theo dõi ML**   | MLflow 2.8.0         | 5000       | Theo dõi mô hình                  |
+| **Trực quan hóa** | Metabase             | 3000       | Dashboard BI                      |
+| **API**           | FastAPI              | 8000       | Dự đoán thời gian thực (tùy chọn) |
 
 ## 📋 Yêu cầu hệ thống
 
@@ -60,7 +62,7 @@ wsl --shutdown
 
 ## 🚀 Hướng dẫn chạy
 
-### 1. Clone repository
+### 1. Tải mã nguồn
 
 ```bash
 git clone https://github.com/bin-bard/real-time-fraud-detection-lakehouse.git
@@ -75,41 +77,41 @@ docker compose up -d --build
 
 **⏳ Thời gian khởi động:** ~5-10 phút (tải images + khởi tạo services)
 
-### 3. Bulk load initial data (Optional - Khuyến nghị)
+### 3. Tải dữ liệu ban đầu (Tùy chọn - Khuyến nghị)
 
-Để có đủ data cho ML training ngay lập tức:
+Để có đủ dữ liệu cho huấn luyện ML ngay lập tức:
 
 ```bash
-# Load 50K transactions (~250 fraud samples)
+# Tải 50K giao dịch (~250 giao dịch gian lận)
 docker exec data-producer python producer.py --bulk-load 50000
 ```
 
 **Kết quả:**
 
-- ~50K records trong 2-3 phút
-- ~250 fraud transactions (0.5% fraud rate)
-- Đủ data cho ML training ngay
+- ~50K bản ghi trong 2-3 phút
+- ~250 giao dịch gian lận (tỷ lệ 0.5%)
+- Đủ dữ liệu cho huấn luyện ML ngay
 - Producer tự động tiếp tục streaming sau khi xong
 
-**Checkpoint safe:** Không duplicate records, resume đúng vị trí sau khi restart.
+**An toàn checkpoint:** Không trùng lặp bản ghi, tiếp tục đúng vị trí sau khi restart.
 
-### 4. Verify hệ thống
+### 4. Kiểm tra hệ thống
 
-#### Check services đang chạy
+#### Kiểm tra services đang chạy
 
 ```bash
 docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 ```
 
-**Mong đợi:** 15+ containers với status `Up`
+**Kết quả mong đợi:** 15+ containers với trạng thái `Up`
 
-#### Check Bronze streaming
+#### Kiểm tra Bronze streaming
 
 ```bash
 docker logs bronze-streaming --tail 20
 ```
 
-**Mong đợi:**
+**Kết quả mong đợi:**
 
 ```
 Batch 5 processing started
@@ -117,34 +119,34 @@ Writing 142 records to Bronze layer...
 ✅ Batch 5 written successfully
 ```
 
-#### Check Airflow DAG
+#### Kiểm tra Airflow DAG
 
 - Truy cập: http://localhost:8081 (`admin` / `admin`)
-- DAG: `lakehouse_pipeline_taskflow` (mỗi 5 phút)
-- Verify: Silver/Gold tasks thành công
+- DAG: `lakehouse_pipeline_taskflow` (chạy mỗi 5 phút)
+- Kiểm tra: Các task Silver/Gold chạy thành công
 
-#### Check data trong MinIO
+#### Kiểm tra dữ liệu trong MinIO
 
 - Truy cập: http://localhost:9001 (`minio` / `minio123`)
 - Bucket: `lakehouse`
-- Verify folders: `bronze/`, `silver/`, `gold/`
+- Kiểm tra các thư mục: `bronze/`, `silver/`, `gold/`
 
-#### Query data qua Trino
+#### Truy vấn dữ liệu qua Trino
 
 ```bash
 docker exec -it trino trino --server localhost:8081
 ```
 
 ```sql
--- Verify data tồn tại
+-- Kiểm tra dữ liệu tồn tại
 SELECT COUNT(*) FROM delta.bronze.transactions;
 SELECT COUNT(*) FROM delta.silver.transactions;
 SELECT COUNT(*) FROM delta.gold.fact_transactions;
 
--- Sample data
+-- Dữ liệu mẫu
 SELECT * FROM delta.gold.fact_transactions LIMIT 5;
 
--- Fraud distribution
+-- Phân bố gian lận
 SELECT is_fraud, COUNT(*) as count
 FROM delta.silver.transactions
 GROUP BY is_fraud;
@@ -152,136 +154,226 @@ GROUP BY is_fraud;
 quit;
 ```
 
-**⚠️ QUAN TRỌNG:** Query data phải dùng **`delta`** catalog (KHÔNG dùng `hive`):
+**⚠️ QUAN TRỌNG:** Truy vấn dữ liệu phải dùng catalog **`delta`** (KHÔNG dùng `hive`):
 
 - ✅ `delta.bronze.*`, `delta.silver.*`, `delta.gold.*`
-- ❌ `hive.*` (chỉ list tables, không query được Delta format)
+- ❌ `hive.*` (chỉ liệt kê bảng, không truy vấn được định dạng Delta)
 
-## 🔑 Access Services
+## 🔑 Truy cập các dịch vụ
 
-| Service             | URL                   | Username / Password | Ghi chú                                    |
-| ------------------- | --------------------- | ------------------- | ------------------------------------------ |
-| **Airflow**         | http://localhost:8081 | `admin` / `admin`   | Workflow orchestration                     |
-| **Spark Master UI** | http://localhost:8080 | -                   | Monitoring Spark jobs                      |
-| **MinIO Console**   | http://localhost:9001 | `minio` / `minio123`| Data Lake storage                          |
-| **MLflow UI**       | http://localhost:5000 | -                   | ML model tracking                          |
-| **Kafka UI**        | http://localhost:9002 | -                   | Topics, messages, consumer groups          |
-| **Trino UI**        | http://localhost:8085 | -                   | Query engine monitoring                    |
-| **Metabase**        | http://localhost:3000 | (tạo admin lần đầu) | BI Dashboard                               |
-| **PostgreSQL**      | localhost:5432        | `postgres` / `postgres` | Source database                        |
+| Dịch vụ             | URL                   | Tên đăng nhập / Mật khẩu | Ghi chú                           |
+| ------------------- | --------------------- | ------------------------ | --------------------------------- |
+| **Airflow**         | http://localhost:8081 | `admin` / `admin`        | Điều phối workflow                |
+| **Spark Master UI** | http://localhost:8080 | -                        | Giám sát các job Spark            |
+| **MinIO Console**   | http://localhost:9001 | `minio` / `minio123`     | Lưu trữ Data Lake                 |
+| **MLflow UI**       | http://localhost:5000 | -                        | Theo dõi mô hình ML               |
+| **Kafka UI**        | http://localhost:9002 | -                        | Topics, messages, consumer groups |
+| **Trino UI**        | http://localhost:8085 | -                        | Giám sát công cụ truy vấn         |
+| **Metabase**        | http://localhost:3000 | (tạo admin lần đầu)      | Dashboard BI                      |
+| **PostgreSQL**      | localhost:5432        | `postgres` / `postgres`  | Cơ sở dữ liệu nguồn               |
+| **FastAPI**         | http://localhost:8000 | -                        | API dự đoán gian lận real-time    |
 
 ## 📊 Kiến trúc hệ thống
 
-### Medallion Architecture (Hybrid: Streaming + Batch)
+### Kiến trúc Medallion (Kết hợp: Streaming + Batch)
 
 ```
-PostgreSQL (Source)
+PostgreSQL (Nguồn)
     ↓ Debezium CDC
 Kafka (postgres.public.transactions)
-    ↓ Bronze Streaming (Continuous, ~195% CPU)
+    ↓ Bronze Streaming (Liên tục, ~195% CPU)
 Bronze Delta Lake (s3a://lakehouse/bronze/)
-    ↓ Silver Batch (Every 5 minutes via Airflow)
+    ↓ Silver Batch (Mỗi 5 phút qua Airflow)
 Silver Delta Lake (s3a://lakehouse/silver/)
-    ↓ Gold Batch (Every 5 minutes via Airflow)
-Gold Delta Lake (s3a://lakehouse/gold/) - 5 tables
+    ↓ Gold Batch (Mỗi 5 phút qua Airflow)
+Gold Delta Lake (s3a://lakehouse/gold/) - 5 bảng
     ↓
-Trino Delta Catalog (Query data)
+Trino Delta Catalog (Truy vấn dữ liệu)
     ↓
-Metabase/DBeaver (Analytics)
+Metabase/DBeaver (Phân tích)
 ```
 
-**Lớp dữ liệu:**
+**Các lớp dữ liệu:**
 
-1. **Bronze** - Raw CDC data (real-time streaming)
-2. **Silver** - Cleaned + Feature engineering (batch mỗi 5 phút)
-3. **Gold** - Star Schema: 4 dimensions + 1 fact table (batch mỗi 5 phút)
+1. **Bronze** - Dữ liệu CDC thô (streaming thời gian thực)
+2. **Silver** - Làm sạch + Kỹ thuật đặc trưng (batch mỗi 5 phút)
+3. **Gold** - Lược đồ sao (Star Schema): 4 chiều + 1 bảng sự kiện (batch mỗi 5 phút)
 
-**Gold Layer Tables:**
+**Các bảng lớp Gold:**
 
-- `dim_customer` - Customer dimension
-- `dim_merchant` - Merchant dimension
-- `dim_time` - Time dimension
-- `dim_location` - Location dimension
-- `fact_transactions` - Transaction facts (25K+ records)
+- `dim_customer` - Chiều khách hàng
+- `dim_merchant` - Chiều cửa hàng
+- `dim_time` - Chiều thời gian
+- `dim_location` - Chiều địa điểm
+- `fact_transactions` - Sự kiện giao dịch (25K+ bản ghi)
 
-## 🤖 ML Training
+## 🤖 Huấn luyện ML
 
-### Automated Training (Airflow)
+### Huấn luyện tự động (Airflow)
 
-- **Schedule:** Daily at 2 AM
+- **Lịch trình:** Hàng ngày lúc 2 giờ sáng
 - **DAG:** `model_retraining_taskflow`
-- **Models:** RandomForest + LogisticRegression
-- **Metrics:** Accuracy, Precision, Recall, F1, AUC
+- **Mô hình:** RandomForest + LogisticRegression
+- **Chỉ số:** Độ chính xác, Precision, Recall, F1, AUC
 
-### Manual Trigger
+### Kích hoạt thủ công
 
 Airflow UI → `model_retraining_taskflow` → ▶️ Trigger DAG
 
-### Resource Management
+### Quản lý tài nguyên
 
-**Trước khi chạy ML training:**
+**Trước khi chạy huấn luyện ML:**
 
 ```powershell
 # Giải phóng ~2GB RAM + 1-2 CPU cores
 .\scripts\prepare-ml-training.ps1
 ```
 
-**Sau khi training xong:**
+**Sau khi huấn luyện xong:**
 
 ```powershell
-# Khôi phục services
+# Khôi phục các dịch vụ
 .\scripts\restore-services.ps1
 ```
 
-### Verify models
+### Kiểm tra mô hình
 
 - Truy cập: http://localhost:5000
-- Experiment: `fraud_detection_production`
-- Check runs: RandomForest, LogisticRegression
+- Thí nghiệm: `fraud_detection_production`
+- Kiểm tra các lần chạy: RandomForest, LogisticRegression
 
-### Training samples FAQ
+### Câu hỏi thường gặp về mẫu huấn luyện
 
-**Q: Tại sao chỉ có ~15-20 training samples?**
+**Hỏi: Tại sao chỉ có ~15-20 mẫu huấn luyện?**
 
-**A:** Đây là behavior ĐÚNG với real-world fraud detection!
+**Đáp:** Đây là hành vi ĐÚNG với phát hiện gian lận thực tế!
 
-| Metric                  | Value       | Explanation                |
-| ----------------------- | ----------- | -------------------------- |
-| Total records (Silver)  | ~4,200      | Sau vài phút streaming     |
-| Fraud transactions      | ~10 (0.24%) | Real-world fraud rate 0.5% |
-| After class balancing   | 10 + 10 = 20| Undersample majority 1:1   |
-| Train/Test split (80/20)| 16 + 4      | Final dataset              |
+| Chỉ số                  | Giá trị      | Giải thích                         |
+| ----------------------- | ------------ | ---------------------------------- |
+| Tổng bản ghi (Silver)   | ~4,200       | Sau vài phút streaming             |
+| Giao dịch gian lận      | ~10 (0.24%)  | Tỷ lệ gian lận thực tế 0.5%        |
+| Sau cân bằng lớp        | 10 + 10 = 20 | Giảm mẫu lớp đa số xuống tỷ lệ 1:1 |
+| Chia train/test (80/20) | 16 + 4       | Tập dữ liệu cuối cùng              |
 
-**Giải pháp:** Bulk load 50K records → ~250 fraud samples → better training
+**Giải pháp:** Tải hàng loạt 50K bản ghi → ~250 mẫu gian lận → huấn luyện tốt hơn
 
 ```bash
 docker exec data-producer python producer.py --bulk-load 50000
 ```
 
-## 🔧 Kết nối Metabase
+## 🔮 API Dự đoán Gian lận (FastAPI)
 
-### Database Configuration
+### Giới thiệu
 
-```yaml
-Database Type: Trino
-Display Name: Fraud Detection Lakehouse
+FastAPI service cung cấp endpoint để dự đoán gian lận real-time sử dụng model từ MLflow.
 
-Connection:
-  Host: trino         # Nếu Metabase chạy trong Docker
-  # Host: localhost   # Nếu Metabase chạy ngoài Docker
-  Port: 8081          # Internal port (8085 for external)
-  Catalog: delta      # ⚠️ IMPORTANT: Dùng delta, không phải hive
-  Database: gold      # Hoặc 'silver'/'bronze'
+**Tính năng:**
 
-Authentication:
-  Username: (leave empty)
-  Password: (leave empty)
+- ✅ Tự động load model từ MLflow Model Registry
+- ✅ Fallback sang rule-based nếu model chưa có
+- ✅ Batch prediction cho nhiều giao dịch
+- ✅ Reload model sau khi training mới
+- ✅ Health check và model info
+
+### Sử dụng API
+
+**1. Kiểm tra trạng thái:**
+
+```bash
+curl http://localhost:8000/health
 ```
 
-### Sample Queries
+**2. Thông tin model:**
+
+```bash
+curl http://localhost:8000/model/info
+```
+
+**3. Dự đoán đơn lẻ:**
+
+```bash
+curl -X POST http://localhost:8000/predict \
+  -H "Content-Type: application/json" \
+  -d '{
+    "amt": 850.50,
+    "log_amount": 6.75,
+    "amount_bin": 3,
+    "is_zero_amount": 0,
+    "is_high_amount": 0,
+    "distance_km": 120.5,
+    "is_distant_transaction": 1,
+    "age": 35,
+    "gender_encoded": 1,
+    "hour": 23,
+    "day_of_week": 6,
+    "is_weekend": 1,
+    "is_late_night": 1,
+    "hour_sin": -0.5,
+    "hour_cos": 0.866,
+    "trans_num": "T123456",
+    "merchant": "fraud_Johnson-Stokes",
+    "category": "gas_transport"
+  }'
+```
+
+**Response:**
+
+```json
+{
+  "trans_num": "T123456",
+  "is_fraud_predicted": 1,
+  "fraud_probability": 0.8523,
+  "risk_level": "HIGH",
+  "model_version": "mlflow_abc123"
+}
+```
+
+**4. Reload model sau khi training:**
+
+```bash
+curl -X POST http://localhost:8000/model/reload
+```
+
+### Tích hợp vào Pipeline
+
+Để sử dụng API trong Silver layer:
+
+```python
+# spark/app/silver_job.py (tích hợp tùy chọn)
+import requests
+
+def predict_fraud_api(features):
+    response = requests.post(
+        "http://fraud-detection-api:8000/predict",
+        json=features
+    )
+    return response.json()
+```
+
+## 🔧 Kết nối Metabase
+
+### Cấu hình cơ sở dữ liệu
+
+```yaml
+Loại cơ sở dữ liệu: Trino
+Tên hiển thị: Fraud Detection Lakehouse
+
+Kết nối:
+  Host: trino # Nếu Metabase chạy trong Docker
+  # Host: localhost   # Nếu Metabase chạy ngoài Docker
+  Port: 8081 # Cổng nội bộ (8085 cho bên ngoài)
+  Catalog: delta # ⚠️ QUAN TRỌNG: Dùng delta, không phải hive
+  Database: gold # Hoặc 'silver'/'bronze'
+
+Xác thực:
+  Username: (để trống)
+  Password: (để trống)
+```
+
+### Truy vấn mẫu
 
 ```sql
--- Fraud rate by category
+-- Tỷ lệ gian lận theo danh mục
 SELECT
     transaction_category,
     COUNT(*) as total_transactions,
@@ -291,7 +383,7 @@ FROM delta.gold.fact_transactions
 GROUP BY transaction_category
 ORDER BY fraud_rate DESC
 
--- Top 10 high-risk merchants
+-- Top 10 cửa hàng rủi ro cao
 SELECT
     merchant_name,
     merchant_category,
@@ -312,75 +404,99 @@ LIMIT 10
 jdbc:trino://localhost:8085/delta
 ```
 
-**Connection Settings:**
+**Cài đặt kết nối:**
 
 - Host: `localhost`
-- Port: `8085`
+- Cổng: `8085`
 - Database/Catalog: `delta`
 - Schema: `gold` (hoặc `silver`, `bronze`)
-- Username: `trino` (hoặc bất kỳ)
-- Password: (để trống)
+- Tên đăng nhập: `trino` (hoặc bất kỳ)
+- Mật khẩu: (để trống)
 
-## 🐛 Troubleshooting
+## 🐛 Xử lý sự cố
 
-### High CPU usage (>500%)
+### FastAPI không kết nối MLflow
+
+```bash
+# 1. Kiểm tra MLflow có chạy
+docker logs mlflow --tail 20
+
+# 2. Kiểm tra FastAPI logs
+docker logs fraud-detection-api --tail 50
+
+# 3. Test API
+curl http://localhost:8000/health
+
+# 4. Reload model sau khi training xong
+curl -X POST http://localhost:8000/model/reload
+```
+
+### Sử dụng CPU cao (>500%)
 
 **Bình thường:**
 
-- `bronze-streaming`: ~195% CPU (continuous)
+- `bronze-streaming`: ~195% CPU (liên tục)
 - `spark-master`: ~50-100% CPU khi chạy job
 - `airflow-*`: ~10-30% CPU
 
-**Nếu >600%:** Restart services
+**Nếu >600%:** Khởi động lại dịch vụ
 
 ```bash
 docker compose restart bronze-streaming spark-master spark-worker
 ```
 
-### No data in Silver/Gold
+### Không có dữ liệu trong Silver/Gold
 
 ```bash
-# 1. Check Bronze có data
+# 1. Kiểm tra Bronze có dữ liệu
 docker exec trino trino --server localhost:8081 --execute "SELECT COUNT(*) FROM delta.bronze.transactions"
 
-# 2. Check Airflow DAG đang chạy
+# 2. Kiểm tra Airflow DAG đang chạy
 # Airflow UI: http://localhost:8081 → lakehouse_pipeline_taskflow
 
-# 3. Check logs
+# 3. Kiểm tra logs
 docker logs airflow-scheduler --tail 50
 ```
 
-### MLflow empty (no models)
+### MLflow trống (không có mô hình)
 
 ```bash
-# 1. Verify Silver có đủ data (cần ít nhất 1000 records với fraud samples)
+# 1. Kiểm tra Silver có đủ dữ liệu (cần ít nhất 1000 bản ghi với mẫu gian lận)
 docker exec trino trino --server localhost:8081 --execute "SELECT is_fraud, COUNT(*) FROM delta.silver.transactions GROUP BY is_fraud"
 
-# 2. Trigger training DAG
+# 2. Kích hoạt DAG huấn luyện
 # Airflow UI → model_retraining_taskflow → Trigger DAG
 
-# 3. Check logs
+# 3. Kiểm tra logs
 # Airflow UI → model_retraining_taskflow → train_ml_models → Logs
 ```
 
-### Reset toàn bộ hệ thống
+### Khởi động lại toàn bộ hệ thống
 
 ```bash
-# ⚠️ Cảnh báo: Xóa toàn bộ data!
+# ⚠️ Cảnh báo: Xóa toàn bộ dữ liệu!
 docker compose down -v
 docker compose up -d --build
 ```
 
-## 📖 Documentation
+## 📖 Tài liệu
 
-- **[PROJECT_SPECIFICATION.md](docs/PROJECT_SPECIFICATION.md)** - Đặc tả chi tiết architecture, data flow, requirements
-- **[CHANGELOG.md](docs/CHANGELOG.md)** - Lịch sử cập nhật, lỗi đã sửa, FAQ
+- **[PROJECT_SPECIFICATION.md](docs/PROJECT_SPECIFICATION.md)** - Đặc tả chi tiết kiến trúc, luồng dữ liệu, yêu cầu
+- **[CHANGELOG.md](docs/CHANGELOG.md)** - Lịch sử cập nhật, lỗi đã sửa, câu hỏi thường gặp
 
-## 📝 License
+## 📝 Giấy phép
 
-MIT License - Nhóm 6, GVHD: ThS. Phan Thị Thể
+**Giấy phép MIT (MIT License)**
 
-## 👥 Contributors
+Copyright (c) 2025 Nhóm 6 - GVHD: ThS. Phan Thị Thể
+
+Giấy phép này cho phép bất kỳ ai có được bản sao của phần mềm và tài liệu liên quan ("Phần mềm") được phép sử dụng Phần mềm mà không bị hạn chế, bao gồm nhưng không giới hạn quyền sử dụng, sao chép, sửa đổi, hợp nhất, xuất bản, phân phối, cấp phép con và/hoặc bán các bản sao của Phần mềm, với các điều kiện sau:
+
+Thông báo bản quyền trên và thông báo giấy phép này phải được bao gồm trong tất cả các bản sao hoặc phần quan trọng của Phần mềm.
+
+PHẦN MỀM ĐƯỢC CUNG CẤP "NGUYÊN TRẠNG", KHÔNG CÓ BẢO HÀNH DƯỚI BẤT KỲ HÌNH THỨC NÀO, RÕ RÀNG HOẶC NGỤ Ý, BAO GỒM NHƯNG KHÔNG GIỚI HẠN BẢO HÀNH VỀ KHẢ NĂNG THƯƠNG MẠI, PHÙ HỢP CHO MỘT MỤC ĐÍCH CỤ THỂ VÀ KHÔNG VI PHẠM. TRONG BẤT KỲ TRƯỜNG HỢP NÀO, TÁC GIẢ HOẶC CHỦ SỞ HỮU BẢN QUYỀN KHÔNG CHỊU TRÁCH NHIỆM VỀ BẤT KỲ YÊU CẦU, THIỆT HẠI HOẶC TRÁCH NHIỆM PHÁP LÝ NÀO.
+
+## 👥 Thành viên nhóm
 
 - Nguyễn Thanh Tài - 22133049
 - Võ Triệu Phúc - 22133043

@@ -4,11 +4,11 @@ Ghi lại lịch sử phát triển, lỗi đã sửa, cập nhật và câu h�
 
 ---
 
-## 📅 Version History
+## 📅 Lịch sử phiên bản
 
-### v6.0 - Final Implementation (December 4, 2025)
+### v6.0 - Final Implementation (4 tháng 12, 2025)
 
-**✅ Completed Features:**
+**✅ Tính năng hoàn thành:**
 
 - Real-time CDC pipeline (PostgreSQL → Kafka → Delta Lake)
 - Hybrid processing (Streaming Bronze + Batch Silver/Gold)
@@ -17,22 +17,24 @@ Ghi lại lịch sử phát triển, lỗi đã sửa, cập nhật và câu h�
 - MLflow experiment tracking
 - Trino query engine với Delta catalog
 - Bulk load feature cho initial data
+- **FastAPI prediction service** với MLflow integration
 
-**🔧 Major Fixes:**
+**🔧 Sửa lỗi chính:**
 
 - Debezium NUMERIC encoding (Base64 → double)
 - Hive Metastore restart issue (schema conflict)
 - Trino port confusion (8080 → 8081)
 - ML training sample size explanation
 - Data producer checkpoint recovery
+- FastAPI deployment với hot model reload
 
 ---
 
-## 🐛 Issues Fixed & Resolutions
+## 🐛 Các lỗi đã sửa & Giải pháp
 
-### Issue #1: Debezium `amt` Field Returns NULL
+### Lỗi #1: Debezium field `amt` trả về NULL
 
-**Ngày phát hiện:** November 28, 2025
+**Ngày phát hiện:** 28 tháng 11, 2025
 
 **Triệu chứng:**
 
@@ -40,9 +42,9 @@ Ghi lại lịch sử phát triển, lỗi đã sửa, cập nhật và câu h�
 - Bronze layer: `amt = NULL`
 - Silver/Gold layer: Không có dữ liệu số tiền
 
-**Root Cause:**
+**Nguyên nhân gốc:**
 
-Debezium mặc định encode NUMERIC/DECIMAL fields as **Base64** để preserve precision. Spark không tự động decode Base64.
+Debezium mặc định encode NUMERIC/DECIMAL fields dạng **Base64** để preserve precision. Spark không tự động decode Base64.
 
 **Giải pháp:**
 
@@ -56,9 +58,9 @@ Cấu hình Debezium connector với `decimal.handling.mode=double`:
 }
 ```
 
-**File changed:** `deployment/debezium/setup-connector.sh`
+**File đã sửa:** `deployment/debezium/setup-connector.sh`
 
-**Verification:**
+**Kiểm tra:**
 
 ```bash
 # Check Kafka message format
@@ -67,17 +69,17 @@ docker exec kafka kafka-console-consumer \
   --topic postgres.public.transactions \
   --max-messages 1
 
-# ✅ Expected: "amt": 23.45 (plain double)
-# ❌ Before: "amt": "AfE=" (Base64)
+# ✅ Mong đợi: "amt": 23.45 (plain double)
+# ❌ Trước đây: "amt": "AfE=" (Base64)
 ```
 
-**Status:** ✅ Resolved
+**Trạng thái:** ✅ Đã giải quyết
 
 ---
 
-### Issue #2: Hive Metastore Fails to Restart
+### Lỗi #2: Hive Metastore không khởi động lại được
 
-**Ngày phát hiện:** November 30, 2025
+**Ngày phát hiện:** 30 tháng 11, 2025
 
 **Triệu chứng:**
 
@@ -88,10 +90,10 @@ FATAL: database system is corrupted
 
 Container crash loop mỗi khi restart.
 
-**Root Cause:**
+**Nguyên nhân gốc:**
 
 - Hive Metastore init script (`schematool -initSchema`) chạy mỗi lần start
-- PostgreSQL volume persist schema → schema đã tồn tại
+- PostgreSQL volume giữ schema → schema đã tồn tại
 - Init script cố tạo lại schema → conflict
 
 **Giải pháp 1 (ban đầu):** Xóa volume persistence
@@ -107,7 +109,7 @@ metastore-db:
   # Không có volumes - fresh DB mỗi lần start
 ```
 
-**Giải pháp 2 (final):** Custom entrypoint with schema check
+**Giải pháp 2 (cuối cùng):** Custom entrypoint với schema check
 
 **File:** `deployment/hive-metastore/entrypoint.sh`
 
@@ -136,18 +138,18 @@ fi
 exec /opt/hive/bin/hive --service metastore
 ```
 
-**File changed:**
+**Files đã sửa:**
 
 - `deployment/hive-metastore/Dockerfile` - COPY entrypoint.sh
-- `docker-compose.yml` - Re-enable volume persistence
+- `docker-compose.yml` - Bật lại volume persistence
 
-**Status:** ✅ Resolved
+**Trạng thái:** ✅ Đã giải quyết
 
 ---
 
-### Issue #3: Hadoop Version Mismatch
+### Lỗi #3: Hadoop Version Mismatch
 
-**Ngày phát hiện:** November 30, 2025
+**Ngày phát hiện:** 30 tháng 11, 2025
 
 **Triệu chứng:**
 
@@ -156,10 +158,10 @@ java.lang.ClassNotFoundException: org.apache.hadoop.fs.s3a.S3AFileSystem
 java.lang.NoSuchMethodError: org.apache.hadoop.fs.statistics.IOStatisticsSource.getIOStatistics()
 ```
 
-**Root Cause:**
+**Nguyên nhân gốc:**
 
-- Hive 3.1.3 built with Hadoop 3.1.0
-- Custom JARs used Hadoop 3.3.4
+- Hive 3.1.3 build với Hadoop 3.1.0
+- Custom JARs dùng Hadoop 3.3.4
 - API incompatibility giữa 3.1.0 và 3.3.4
 
 **Giải pháp:**
@@ -176,15 +178,15 @@ aws-java-sdk-bundle-1.11.375.jar  # ← Từ 1.12.262
 # hadoop-shaded-guava-*.jar
 ```
 
-**File changed:** `deployment/hive-metastore/lib/` directory
+**File đã sửa:** `deployment/hive-metastore/lib/` directory
 
-**Status:** ✅ Resolved
+**Trạng thái:** ✅ Đã giải quyết
 
 ---
 
-### Issue #4: MinIO Credential Mismatch (403 Forbidden)
+### Lỗi #4: MinIO Credential Mismatch (403 Forbidden)
 
-**Ngày phát hiện:** November 30, 2025
+**Ngày phát hiện:** 30 tháng 11, 2025
 
 **Triệu chứng:**
 
@@ -193,14 +195,14 @@ Status Code: 403, AWS Service: Amazon S3
 AWS Error Message: Forbidden
 ```
 
-**Root Cause:**
+**Nguyên nhân gốc:**
 
 - MinIO service: `minio` / `minio123`
 - Hive core-site.xml: `minioadmin` / `minioadmin`
 
 **Giải pháp:**
 
-Update `core-site.xml` credentials:
+Cập nhật credentials trong `core-site.xml`:
 
 ```xml
 <property>
@@ -214,15 +216,15 @@ Update `core-site.xml` credentials:
 </property>
 ```
 
-**File changed:** `deployment/hive-metastore/core-site.xml`
+**File đã sửa:** `deployment/hive-metastore/core-site.xml`
 
-**Status:** ✅ Resolved
+**Trạng thái:** ✅ Đã giải quyết
 
 ---
 
-### Issue #5: MSCK REPAIR TABLE Not Supported
+### Lỗi #5: MSCK REPAIR TABLE Not Supported
 
-**Ngày phát hiện:** December 1, 2025
+**Ngày phát hiện:** 1 tháng 12, 2025
 
 **Triệu chứng:**
 
@@ -230,48 +232,48 @@ Update `core-site.xml` credentials:
 ERROR: MSCK REPAIR TABLE is not supported for v2 tables
 ```
 
-Chỉ 2/7 tables registered thành công.
+Chỉ 2/7 tables đăng ký thành công.
 
-**Root Cause:**
+**Nguyên nhân gốc:**
 
 - Delta Lake v2 sử dụng `_delta_log/` transaction log
 - `MSCK REPAIR TABLE` chỉ cho Hive partitioned tables (Parquet/ORC)
-- Delta tự động manage partitions
+- Delta tự động quản lý partitions
 
 **Giải pháp:**
 
-Remove MSCK REPAIR command:
+Xóa lệnh MSCK REPAIR:
 
 ```python
 # spark/app/register_tables_to_hive.py
 
-# ❌ CŨ (line 63):
+# ❌ CŨ (dòng 63):
 spark.sql(f"MSCK REPAIR TABLE {database}.{table_name}")
 
-# ✅ MỚI (line 63-64):
+# ✅ MỚI (dòng 63-64):
 # Note: MSCK REPAIR TABLE not supported for Delta v2 tables
-# Delta automatically manages partitions via _delta_log/
+# Delta tự động quản lý partitions qua _delta_log/
 ```
 
-**Verification:**
+**Kiểm tra:**
 
 ```bash
 docker logs hive-registration --tail 50
 
-# ✅ Expected:
+# ✅ Mong đợi:
 # Registered bronze.transactions (25,000 records)
 # Registered silver.transactions (25,000 records)
 # Registered gold.dim_customer
-# ...all 7 tables
+# ...tất cả 7 tables
 ```
 
-**Status:** ✅ Resolved
+**Trạng thái:** ✅ Đã giải quyết
 
 ---
 
-### Issue #6: Trino Port Confusion (Connection Refused)
+### Lỗi #6: Trino Port Confusion (Connection Refused)
 
-**Ngày phát hiện:** December 1, 2025
+**Ngày phát hiện:** 1 tháng 12, 2025
 
 **Triệu chứng:**
 
@@ -279,141 +281,236 @@ docker logs hive-registration --tail 50
 java.net.ConnectException: Failed to connect to localhost:8080
 ```
 
-**Root Cause:**
+**Nguyên nhân gốc:**
 
 - Trino internal port: **8081**
 - Trino external port: **8085**
-- Default `trino` CLI assumes port 8080
+- Default `trino` CLI giả định port 8080
 
 **Giải pháp:**
 
-Luôn specify port explicitly:
+Luôn chỉ định port rõ ràng:
 
 ```bash
-# ✅ Inside Docker network:
+# ✅ Bên trong Docker network:
 docker exec trino trino --server localhost:8081
 
-# ✅ From host machine:
+# ✅ Từ host machine:
 trino --server localhost:8085
 
-# ❌ Wrong (defaults to 8080):
+# ❌ Sai (mặc định 8080):
 docker exec trino trino
 ```
 
-**Metabase config:**
+**Cấu hình Metabase:**
 
 ```yaml
 Host: trino # Docker service name
 Port: 8081 # Internal port
 ```
 
-**Status:** ✅ Resolved
+**Trạng thái:** ✅ Đã giải quyết
 
 ---
 
-### Issue #7: ML Training với ít samples (~15-20)
+### Lỗi #7: ML Training với ít samples (~15-20)
 
-**Ngày phát hiện:** December 3, 2025
+**Ngày phát hiện:** 3 tháng 12, 2025
 
 **Triệu chứng:**
 
-MLflow UI shows:
+MLflow UI hiển thị:
 
 - `train_samples: 14-17`
 - `test_samples: 3-4`
 
 User có 4000+ records trong Silver nhưng chỉ 20 samples.
 
-**Root Cause:**
+**Nguyên nhân gốc:**
 
-**ĐÂY KHÔNG PHẢI LỖI!** Real-world fraud detection behavior:
+**ĐÂY KHÔNG PHẢI LỖI!** Hành vi real-world fraud detection:
 
-| Metric                  | Value       | Explanation                 |
-| ----------------------- | ----------- | --------------------------- |
-| Total Silver records    | ~4,200      | After few minutes streaming |
-| Fraud transactions      | ~10 (0.24%) | Real-world rate: 0.5-1%     |
-| Non-fraud               | ~4,190      | Majority class              |
-| **After class balance** | 10+10=20    | Undersample to 1:1 ratio    |
-| Train/Test (80/20)      | 16 + 4      | Final dataset               |
+| Metric                | Giá trị     | Giải thích             |
+| --------------------- | ----------- | ---------------------- |
+| Tổng records Silver   | ~4,200      | Sau vài phút streaming |
+| Giao dịch gian lận    | ~10 (0.24%) | Tỉ lệ thực tế: 0.5-1%  |
+| Giao dịch bình thường | ~4,190      | Majority class         |
+| **Sau class balance** | 10+10=20    | Undersample tỉ lệ 1:1  |
+| Train/Test (80/20)    | 16 + 4      | Dataset cuối cùng      |
 
 **Giải pháp:**
 
-**Option 1: Bulk Load (Recommended)**
+**Tùy chọn 1: Bulk Load (Khuyến nghị)**
 
 ```bash
 # Load 50K transactions → ~250 fraud samples
 docker exec data-producer python producer.py --bulk-load 50000
 ```
 
-**Option 2: Wait naturally**
+**Tùy chọn 2: Đợi tự nhiên**
 
-- Fraud rate 0.5% → 100 frauds needs ~20K transactions
-- Data producer streaming: ~5-10 transactions/second
-- Wait ~2-4 hours for sufficient data
+- Tỉ lệ fraud 0.5% → 100 frauds cần ~20K transactions
+- Data producer streaming: ~5-10 transactions/giây
+- Đợi ~2-4 giờ để có đủ dữ liệu
 
-**Option 3: Increase streaming speed**
+**Tùy chọn 3: Tăng tốc streaming**
 
 ```python
-# Modify services/data-producer/producer.py
-time.sleep(0.5)  # Instead of time.sleep(5)
+# Sửa services/data-producer/producer.py
+time.sleep(0.5)  # Thay vì time.sleep(5)
 ```
 
-**Documentation updated:**
+**Documentation đã cập nhật:**
 
-- `README.md` - Added bulk load feature
-- `docs/TROUBLESHOOTING.md` - Added Issue #7 explanation
+- `README.md` - Thêm bulk load feature
+- `docs/TROUBLESHOOTING.md` - Thêm giải thích Issue #7
 
-**Status:** ✅ Not a bug - Working as designed
+**Trạng thái:** ✅ Không phải lỗi - Hoạt động đúng thiết kế
 
 ---
 
-### Issue #8: MLflow Verification Task Failed
+### Lỗi #8: MLflow Verification Task Failed
 
-**Ngày phát hiện:** December 3, 2025
+**Ngày phát hiện:** 3 tháng 12, 2025
 
 **Triệu chứng:**
 
-Airflow task `verify_mlflow` failed with "Models not found in registry"
+Airflow task `verify_mlflow` failed với "Models not found in registry"
 
-**Root Cause:**
+**Nguyên nhân gốc:**
 
-- Task checked MLflow **Model Registry** (registered models for production)
-- But training logged to **MLflow Tracking** (experiments/runs)
-- Two different concepts in MLflow!
+- Task kiểm tra MLflow **Model Registry** (registered models cho production)
+- Nhưng training log vào **MLflow Tracking** (experiments/runs)
+- Hai khái niệm khác nhau trong MLflow!
 
 **Giải pháp:**
 
-Update verification task to check **Tracking** instead of **Registry**:
+Cập nhật verification task kiểm tra **Tracking** thay vì **Registry**:
 
 ```python
 # airflow/dags/model_retraining_taskflow.py
 
-# ✅ NEW - Check MLflow Tracking (experiments/runs)
+# ✅ MỚI - Kiểm tra MLflow Tracking (experiments/runs)
 response = requests.get(
     "http://mlflow:5000/api/2.0/mlflow/experiments/search"
 )
 experiments = response.json().get("experiments", [])
 
-# Find experiment
+# Tìm experiment
 fraud_exp = next(
     (e for e in experiments if e["name"] == "fraud_detection_production"),
     None
 )
 
-# Check runs
+# Kiểm tra runs
 runs_response = requests.get(
     f"http://mlflow:5000/api/2.0/mlflow/runs/search",
     json={"experiment_ids": [fraud_exp["experiment_id"]]}
 )
 ```
 
-**Also fixed:** Changed from `curl` to Python `requests` (mlflow container lacks curl)
+**Cũng đã sửa:** Đổi từ `curl` sang Python `requests` (mlflow container thiếu curl)
 
-**Status:** ✅ Resolved
+**Trạng thái:** ✅ Đã giải quyết
 
 ---
 
-## ❓ Frequently Asked Questions
+### Lỗi #9: FastAPI không load được model từ MLflow
+
+**Ngày phát hiện:** 4 tháng 12, 2025
+
+**Triệu chứng:**
+
+```
+ModuleNotFoundError: No module named 'mlflow'
+WARNING: Model not loaded, using rule-based prediction
+```
+
+**Nguyên nhân gốc:**
+
+- FastAPI service chưa được deploy trong `docker-compose.yml`
+- Code đã có nhưng container không chạy
+- Lỗi import chỉ là IDE warning (không phải lỗi runtime)
+
+**Giải pháp:**
+
+1. **Thêm service vào docker-compose.yml:**
+
+```yaml
+fraud-detection-api:
+  build: ./services/fraud-detection-api
+  container_name: fraud-detection-api
+  ports:
+    - "8000:8000"
+  environment:
+    MLFLOW_TRACKING_URI: http://mlflow:5000
+    AWS_ACCESS_KEY_ID: minio
+    AWS_SECRET_ACCESS_KEY: minio123
+    MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+    MODEL_NAME: fraud_detection_randomforest
+    MODEL_STAGE: None
+  depends_on:
+    - mlflow
+    - minio
+  networks:
+    - data_network
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+```
+
+2. **Upgrade main.py với MLflow integration:**
+
+```python
+def load_model_from_mlflow():
+    """Load model từ MLflow Registry hoặc latest run"""
+    try:
+        # Ưu tiên: Model Registry
+        model_uri = f"models:/{MODEL_NAME}/{MODEL_STAGE}"
+        loaded_model = mlflow.pyfunc.load_model(model_uri)
+
+    except Exception as e:
+        # Fallback: Latest experiment run
+        runs = client.search_runs(
+            experiment_ids=[experiment.experiment_id],
+            filter_string="tags.model_type='RandomForest'",
+            order_by=["start_time DESC"],
+            max_results=1
+        )
+        run = runs[0]
+        model_uri = f"runs:/{run.info.run_id}/model"
+        loaded_model = mlflow.pyfunc.load_model(model_uri)
+```
+
+3. **Cập nhật Dockerfile với curl:**
+
+```dockerfile
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+```
+
+**Kiểm tra:**
+
+```bash
+# Build và start service
+docker compose up -d --build fraud-detection-api
+
+# Test health
+curl http://localhost:8000/health
+
+# Test prediction
+curl -X POST http://localhost:8000/predict \
+  -H "Content-Type: application/json" \
+  -d '{"amt": 850.50, "log_amount": 6.75, ...}'
+```
+
+**Trạng thái:** ✅ Đã giải quyết
+
+---
+
+## ❓ Câu hỏi thường gặp (FAQ)
 
 ### Q1: Hive Metastore có vai trò gì?
 
@@ -424,7 +521,7 @@ runs_response = requests.get(
 - ❌ KHÔNG dùng để query data
 - ❌ KHÔNG bắt buộc (Delta tự discover tables)
 
-**Query pattern:**
+**Mẫu truy vấn:**
 
 ```sql
 -- ✅ ĐÚNG - Query data
@@ -436,6 +533,8 @@ SHOW TABLES FROM hive.gold;
 -- ❌ SAI - Query qua Hive
 -- SELECT * FROM hive.gold.fact_transactions; -- Error!
 ```
+
+---
 
 ### Q2: Tại sao không dùng `hive.*` catalog để query?
 
@@ -454,6 +553,8 @@ SHOW TABLES FROM hive.gold;
 
 - Query Delta Lake tables (PHẢI dùng!)
 - Tất cả SELECT/INSERT/UPDATE operations
+
+---
 
 ### Q3: Producer tắt rồi bật lại có bị lỗi không?
 
@@ -488,6 +589,8 @@ CREATE TABLE producer_checkpoint (
 - ✅ Resume đúng vị trí
 - ✅ Bulk load cũng tuân theo checkpoint
 
+---
+
 ### Q4: Bulk load có conflict với streaming không?
 
 **A:** KHÔNG conflict:
@@ -506,15 +609,17 @@ CREATE TABLE producer_checkpoint (
 - Debezium LSN (Log Sequence Number)
 - Spark streaming checkpoint (exactly-once)
 
+---
+
 ### Q5: Làm sao biết hệ thống đang chạy tốt?
 
-**A:** Check các indicators sau:
+**A:** Kiểm tra các chỉ số sau:
 
 **1. Container health:**
 
 ```bash
 docker ps --format "table {{.Names}}\t{{.Status}}"
-# All containers: Up (healthy)
+# Tất cả containers: Up (healthy)
 ```
 
 **2. Bronze streaming:**
@@ -527,10 +632,10 @@ docker logs bronze-streaming --tail 20
 **3. Airflow DAGs:**
 
 - http://localhost:8081
-- `lakehouse_pipeline_taskflow`: Success (green)
-- Recent runs: < 5 minutes ago
+- `lakehouse_pipeline_taskflow`: Success (xanh)
+- Recent runs: < 5 phút trước
 
-**4. Data count:**
+**4. Số lượng dữ liệu:**
 
 ```sql
 -- Trino query
@@ -549,11 +654,13 @@ SELECT 'gold', COUNT(*) FROM delta.gold.fact_transactions;
 ```bash
 docker stats --no-stream
 
-# ✅ Normal:
+# ✅ Bình thường:
 # bronze-streaming: ~195% CPU (continuous)
 # spark-master: ~50-100% CPU (when running jobs)
 # airflow-*: ~10-30% CPU
 ```
+
+---
 
 ### Q6: Khi nào nên restart services?
 
@@ -564,32 +671,34 @@ docker stats --no-stream
 3. **No data flow**: Bronze/Silver/Gold không cập nhật
 4. **Config changes**: Thay đổi docker-compose.yml
 
-**Restart commands:**
+**Lệnh restart:**
 
 ```bash
-# Restart specific service
+# Restart service cụ thể
 docker compose restart bronze-streaming
 
-# Restart all Spark services
+# Restart tất cả Spark services
 docker compose restart spark-master spark-worker bronze-streaming
 
-# Full restart (keep data)
+# Full restart (giữ data)
 docker compose down
 docker compose up -d
 
-# Nuclear option (remove ALL data)
+# Nuclear option (xóa TẤT CẢ data)
 docker compose down -v
 docker compose up -d --build
 ```
+
+---
 
 ### Q7: Data producer chạy bao lâu?
 
 **A:** Tùy mode:
 
-**Streaming mode (default):**
+**Streaming mode (mặc định):**
 
 - Chạy vô thời hạn (container restart: always)
-- Insert ~5-10 transactions/second
+- Insert ~5-10 transactions/giây
 - Fraud rate: 0.5-1%
 - Dataset size: 1.8M records → ~2-4 tuần để hết
 
@@ -601,9 +710,11 @@ docker exec data-producer python producer.py --bulk-load 50000
 # Producer tự động tiếp tục streaming sau khi bulk load xong
 ```
 
+---
+
 ### Q8: Làm sao backup data?
 
-**A:** Backup 3 components:
+**A:** Backup 3 thành phần:
 
 **1. MinIO (Data Lake):**
 
@@ -628,56 +739,60 @@ docker exec postgres psql -U postgres < backup/frauddb.sql
 
 **3. MLflow artifacts:**
 
-Already in MinIO bucket (`s3a://lakehouse/models/`)
+Đã có trong MinIO bucket (`s3a://lakehouse/models/`)
+
+---
 
 ### Q9: Metabase không thấy tables?
 
-**A:** Check connection config:
+**A:** Kiểm tra cấu hình connection:
 
-**Common mistakes:**
+**Lỗi thường gặp:**
 
 ```yaml
-# ❌ Wrong catalog
-Catalog: hive # Should be "delta"
+# ❌ Sai catalog
+Catalog: hive # Nên là "delta"
 
-# ❌ Wrong port
-Port: 8085 # Should be 8081 (internal) if Metabase in Docker
+# ❌ Sai port
+Port: 8085 # Nên là 8081 (internal) nếu Metabase trong Docker
 
-# ❌ Wrong host
-Host: localhost # Should be "trino" if Metabase in Docker
+# ❌ Sai host
+Host: localhost # Nên là "trino" nếu Metabase trong Docker
 ```
 
-**Correct config:**
+**Cấu hình đúng:**
 
 ```yaml
 Database Type: Trino
 Host: trino # Docker service name
 Port: 8081 # Internal port
-Catalog: delta # ⚠️ MUST use delta
-Database: gold # Or silver/bronze
-Username: (empty)
-Password: (empty)
+Catalog: delta # ⚠️ PHẢI dùng delta
+Database: gold # Hoặc silver/bronze
+Username: (để trống)
+Password: (để trống)
 ```
 
-**Verify Trino working:**
+**Kiểm tra Trino hoạt động:**
 
 ```bash
 docker exec trino trino --server localhost:8081 --execute "SHOW TABLES FROM delta.gold"
-# ✅ Should list 5 tables
+# ✅ Nên liệt kê 5 tables
 ```
+
+---
 
 ### Q10: Model training quá lâu?
 
-**A:** Optimize resources:
+**A:** Tối ưu tài nguyên:
 
-**Before training:**
+**Trước khi training:**
 
 ```powershell
-# Free up ~2GB RAM + 1-2 CPU cores
+# Giải phóng ~2GB RAM + 1-2 CPU cores
 .\scripts\prepare-ml-training.ps1
 ```
 
-**Spark config (already optimized):**
+**Spark config (đã tối ưu):**
 
 ```python
 '--conf', 'spark.cores.max=2',
@@ -686,79 +801,142 @@ docker exec trino trino --server localhost:8081 --execute "SHOW TABLES FROM delt
 '--conf', 'spark.driver.memory=1g',
 ```
 
-**Expected time:**
+**Thời gian mong đợi:**
 
-- 50K records: ~2-3 minutes
-- 1M records: ~10-15 minutes
+- 50K records: ~2-3 phút
+- 1M records: ~10-15 phút
 
-**If still slow:**
+**Nếu vẫn chậm:**
 
-- Reduce dataset: Filter recent data only
-- Increase resources: Edit `.wslconfig` (Windows)
-- Use sampling: Train on 10% data for testing
+- Giảm dataset: Chỉ lọc dữ liệu gần đây
+- Tăng resources: Sửa `.wslconfig` (Windows)
+- Dùng sampling: Train trên 10% data để test
 
 ---
 
-## 🔧 Common Operations
+### Q11: FastAPI trả về "model not loaded"?
+
+**A:** Kiểm tra các bước sau:
+
+**1. Service đang chạy?**
+
+```bash
+docker ps | grep fraud-detection-api
+# ✅ Nên thấy: Up (healthy)
+```
+
+**2. Kiểm tra logs:**
+
+```bash
+docker logs fraud-detection-api --tail 50
+
+# ✅ Mong đợi:
+# "✅ Model loaded successfully from Model Registry"
+
+# ⚠️ Nếu thấy:
+# "❌ Failed to load model from MLflow"
+# → MLflow chưa có model, chạy training trước
+```
+
+**3. Training đã chạy chưa?**
+
+```bash
+# Kiểm tra MLflow UI
+open http://localhost:5000
+
+# Hoặc trigger manual training
+docker exec airflow-scheduler airflow dags trigger model_retraining_taskflow
+```
+
+**4. Reload model sau training:**
+
+```bash
+curl -X POST http://localhost:8000/model/reload
+
+# ✅ Response:
+# {"status": "success", "model_version": "abc123"}
+```
+
+**5. Test prediction:**
+
+```bash
+curl -X POST http://localhost:8000/predict \
+  -H "Content-Type: application/json" \
+  -d '{
+    "amt": 850.50,
+    "log_amount": 6.75,
+    "distance_km": 120.5,
+    "age": 35,
+    "hour": 23,
+    ...
+  }'
+
+# ✅ Response:
+# {"is_fraud_predicted": 1, "fraud_probability": 0.85, "risk_level": "HIGH"}
+```
+
+---
+
+## 🔧 Thao tác thường dùng
 
 ### Reset Everything (Clean Slate)
 
 ```bash
-# ⚠️ WARNING: Deletes ALL data!
+# ⚠️ CẢNH BÁO: Xóa TẤT CẢ dữ liệu!
 docker compose down -v
 docker compose up -d --build
 
-# Wait ~5 minutes for initialization
+# Đợi ~5 phút để khởi tạo
 docker logs -f bronze-streaming
 ```
 
-### Stop/Start Services (Keep Data)
+### Dừng/Khởi động Services (Giữ Data)
 
 ```bash
-# Stop (preserve volumes)
+# Dừng (giữ volumes)
 docker compose down
 
-# Start
+# Khởi động
 docker compose up -d
 
-# Check status
+# Kiểm tra trạng thái
 docker compose ps
 ```
 
-### View Logs
+### Xem Logs
 
 ```bash
-# Follow logs (Ctrl+C to exit)
+# Theo dõi logs (Ctrl+C để thoát)
 docker logs -f bronze-streaming
 
-# Last 50 lines
+# 50 dòng cuối
 docker logs bronze-streaming --tail 50
 
-# Filter by keyword
+# Lọc theo từ khóa
 docker logs airflow-scheduler | grep "ERROR"
 
-# Multiple services
+# Nhiều services
 docker logs bronze-streaming spark-master --tail 20
 ```
 
-### Clean Up Disk Space
+### Dọn dẹp Disk Space
 
 ```bash
-# Remove unused images
+# Xóa images không dùng
 docker image prune -a
 
-# Remove unused volumes
+# Xóa volumes không dùng
 docker volume prune
 
-# Remove build cache
+# Xóa build cache
 docker builder prune
 ```
 
 ---
 
-## 📚 Additional Resources
+## 📚 Tài nguyên bổ sung
 
-### Logs Location
+### Vị trí Logs
 
 - Container logs: `docker logs <service-name>`
 - Airflow logs: Airflow UI → DAGs → Task → Logs
@@ -771,15 +949,16 @@ docker builder prune
 - MLflow: http://localhost:5000
 - Trino: http://localhost:8085
 - MinIO: http://localhost:9001
+- **FastAPI Docs: http://localhost:8000/docs**
 
-### Documentation Files
+### Files Documentation
 
-- `README.md` - Quick start guide
-- `PROJECT_SPECIFICATION.md` - Technical specification
-- `CHANGELOG.md` - This file (issues, FAQ)
+- `README.md` - Hướng dẫn nhanh
+- `PROJECT_SPECIFICATION.md` - Đặc tả kỹ thuật
+- `CHANGELOG.md` - File này (issues, FAQ)
 
 ---
 
-**Document Version:** 1.0  
-**Last Updated:** December 4, 2025  
-**Maintained By:** Nhóm 6
+**Phiên bản tài liệu:** 1.0  
+**Cập nhật lần cuối:** 4 tháng 12, 2025  
+**Duy trì bởi:** Nhóm 6

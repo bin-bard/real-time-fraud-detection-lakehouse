@@ -3,16 +3,106 @@ from pydantic import BaseModel
 from typing import Optional
 import numpy as np
 import logging
+import mlflow
+import os
+from mlflow.tracking import MlflowClient
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# MLflow configuration
+MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
+MODEL_NAME = os.getenv("MODEL_NAME", "fraud_detection_randomforest")
+MODEL_STAGE = os.getenv("MODEL_STAGE", "None")  # Production, Staging, None
+
+mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+
+# Global model variable
+loaded_model = None
+model_version = None
+model_info = {}
+
+def load_model_from_mlflow():
+    """Load latest model from MLflow"""
+    global loaded_model, model_version, model_info
+    
+    try:
+        client = MlflowClient()
+        
+        # Try to load from Model Registry first
+        try:
+            if MODEL_STAGE != "None":
+                model_uri = f"models:/{MODEL_NAME}/{MODEL_STAGE}"
+                logger.info(f"Loading model from Registry: {model_uri}")
+            else:
+                # Get latest version
+                versions = client.search_model_versions(f"name='{MODEL_NAME}'")
+                if versions:
+                    latest_version = max(versions, key=lambda x: int(x.version))
+                    model_uri = f"models:/{MODEL_NAME}/{latest_version.version}"
+                    model_version = latest_version.version
+                    logger.info(f"Loading model version {model_version}")
+                else:
+                    raise Exception("No registered models found")
+            
+            loaded_model = mlflow.pyfunc.load_model(model_uri)
+            logger.info("✅ Model loaded successfully from Model Registry")
+            
+        except Exception as e:
+            # Fallback: Load latest run from experiment
+            logger.warning(f"Model Registry load failed: {e}")
+            logger.info("Trying to load from latest experiment run...")
+            
+            experiment = client.get_experiment_by_name("fraud_detection_production")
+            if not experiment:
+                raise Exception("Experiment 'fraud_detection_production' not found")
+            
+            runs = client.search_runs(
+                experiment_ids=[experiment.experiment_id],
+                filter_string="tags.model_type='RandomForest'",
+                order_by=["start_time DESC"],
+                max_results=1
+            )
+            
+            if not runs:
+                raise Exception("No training runs found")
+            
+            run = runs[0]
+            model_uri = f"runs:/{run.info.run_id}/model"
+            loaded_model = mlflow.pyfunc.load_model(model_uri)
+            model_version = run.info.run_id[:8]
+            
+            # Get metrics
+            model_info = {
+                "run_id": run.info.run_id,
+                "accuracy": run.data.metrics.get("accuracy", 0),
+                "precision": run.data.metrics.get("precision", 0),
+                "recall": run.data.metrics.get("recall", 0),
+                "f1_score": run.data.metrics.get("f1_score", 0),
+                "auc": run.data.metrics.get("auc", 0)
+            }
+            
+            logger.info(f"✅ Model loaded from run {model_version}")
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to load model from MLflow: {e}")
+        logger.info("Will use rule-based prediction as fallback")
+        return False
+
 app = FastAPI(
     title="Fraud Detection API",
-    description="Real-time fraud detection service for credit card transactions using Sparkov dataset",
-    version="2.0.0"
+    description="Real-time fraud detection service using MLflow models",
+    version="3.0.0"
 )
+
+# Load model on startup
+@app.on_event("startup")
+async def startup_event():
+    logger.info("Starting Fraud Detection API...")
+    load_model_from_mlflow()
 
 # Input schema for Sparkov features
 class TransactionFeatures(BaseModel):
@@ -59,13 +149,17 @@ class PredictionResponse(BaseModel):
 @app.get("/")
 def read_root():
     return {
-        "message": "Fraud Detection API - Sparkov Dataset",
-        "version": "2.0.0",
+        "message": "Fraud Detection API - MLflow Integrated",
+        "version": "3.0.0",
         "status": "active",
+        "model_loaded": loaded_model is not None,
+        "model_version": model_version if model_version else "N/A",
         "endpoints": {
             "health": "/health",
             "predict": "/predict",
-            "model_info": "/model/info"
+            "predict_batch": "/predict/batch",
+            "model_info": "/model/info",
+            "reload_model": "/model/reload"
         }
     }
 
@@ -74,50 +168,63 @@ def health():
     return {
         "status": "healthy",
         "service": "fraud-detection-api",
-        "model_loaded": False,  # Will be True when MLflow model is loaded
-        "version": "2.0.0"
+        "model_loaded": loaded_model is not None,
+        "model_version": model_version if model_version else "N/A",
+        "mlflow_uri": MLFLOW_TRACKING_URI,
+        "version": "3.0.0"
     }
 
 @app.post("/predict", response_model=PredictionResponse)
 async def predict_fraud(features: TransactionFeatures):
     """
-    Predict fraud cho một transaction dựa trên features
-    
-    TODO: Load model từ MLflow và thực hiện prediction thực tế
-    Hiện tại: Rule-based prediction để test
+    Predict fraud for a single transaction using MLflow model
     """
     try:
-        # TEMPORARY: Rule-based prediction
-        # Sẽ thay thế bằng ML model từ MLflow
+        # Prepare features array (20 features matching ML training)
+        feature_array = np.array([[
+            features.amt,
+            features.log_amount,
+            features.is_zero_amount,
+            features.is_high_amount,
+            features.amount_bin,
+            features.distance_km,
+            features.is_distant_transaction,
+            features.age,
+            features.gender_encoded,
+            features.hour,
+            features.day_of_week,
+            features.is_weekend,
+            features.is_late_night,
+            features.hour_sin,
+            features.hour_cos,
+            # Additional geographic features if available
+            0.0, 0.0, 0.0, 0.0, 0.0  # Placeholder for lat, long, merch_lat, merch_long, city_pop
+        ]])
         
-        # Simple rule-based scoring
-        risk_score = 0.0
-        
-        # High amount increases risk
-        if features.amt > 500:
-            risk_score += 0.3
-        
-        # Long distance transaction
-        if features.distance_km > 100:
-            risk_score += 0.25
-        
-        # Late night transaction
-        if features.is_late_night == 1:
-            risk_score += 0.15
-        
-        # Distant transaction flag
-        if features.is_distant_transaction == 1:
-            risk_score += 0.2
-        
-        # Weekend transaction
-        if features.is_weekend == 1:
-            risk_score += 0.1
-        
-        # Cap at 1.0
-        fraud_probability = min(risk_score, 1.0)
-        
-        # Classify
-        is_fraud = 1 if fraud_probability > 0.5 else 0
+        if loaded_model is not None:
+            # Use MLflow model
+            try:
+                prediction = loaded_model.predict(feature_array)
+                is_fraud = int(prediction[0])
+                
+                # Try to get probability if model supports it
+                try:
+                    proba = loaded_model.predict_proba(feature_array)
+                    fraud_probability = float(proba[0][1]) if len(proba[0]) > 1 else float(is_fraud)
+                except:
+                    fraud_probability = float(is_fraud)
+                
+                model_ver = f"mlflow_{model_version}"
+                
+            except Exception as e:
+                logger.error(f"MLflow prediction failed: {e}, using rule-based fallback")
+                is_fraud, fraud_probability = rule_based_prediction(features)
+                model_ver = "rule_based_fallback"
+        else:
+            # Fallback to rule-based
+            logger.warning("Model not loaded, using rule-based prediction")
+            is_fraud, fraud_probability = rule_based_prediction(features)
+            model_ver = "rule_based_v1"
         
         # Determine risk level
         if fraud_probability > 0.7:
@@ -134,31 +241,122 @@ async def predict_fraud(features: TransactionFeatures):
             is_fraud_predicted=is_fraud,
             fraud_probability=round(fraud_probability, 4),
             risk_level=risk_level,
-            model_version="rule_based_v1"  # Will change to MLflow model version
+            model_version=model_ver
         )
         
     except Exception as e:
         logger.error(f"Error during prediction: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Prediction error: {str(e)}")
 
+def rule_based_prediction(features: TransactionFeatures):
+    """Fallback rule-based prediction when MLflow model unavailable"""
+    risk_score = 0.0
+    
+    if features.amt > 500:
+        risk_score += 0.3
+    if features.distance_km > 100:
+        risk_score += 0.25
+    if features.is_late_night == 1:
+        risk_score += 0.15
+    if features.is_distant_transaction == 1:
+        risk_score += 0.2
+    if features.is_weekend == 1:
+        risk_score += 0.1
+    
+    fraud_probability = min(risk_score, 1.0)
+    is_fraud = 1 if fraud_probability > 0.5 else 0
+    
+    return is_fraud, fraud_probability
+
 @app.get("/model/info")
-def model_info():
+def model_info_endpoint():
+    """Get current model information"""
+    if loaded_model and model_info:
+        return {
+            "model_type": "mlflow_model",
+            "model_name": MODEL_NAME,
+            "model_version": model_version,
+            "framework": "sklearn",
+            "mlflow_tracking_uri": MLFLOW_TRACKING_URI,
+            "features_count": 20,
+            "trained_on": "sparkov_dataset",
+            "performance": {
+                "accuracy": model_info.get("accuracy", "N/A"),
+                "precision": model_info.get("precision", "N/A"),
+                "recall": model_info.get("recall", "N/A"),
+                "f1_score": model_info.get("f1_score", "N/A"),
+                "auc": model_info.get("auc", "N/A")
+            },
+            "status": "production_ready"
+        }
+    else:
+        return {
+            "model_type": "rule_based",
+            "model_version": "1.0.0",
+            "framework": "custom",
+            "features_count": 15,
+            "trained_on": "N/A",
+            "performance": {
+                "auc": "N/A",
+                "accuracy": "N/A",
+                "precision": "N/A",
+                "recall": "N/A"
+            },
+            "status": "fallback_mode",
+            "note": "MLflow model not loaded, using rule-based fallback"
+        }
+
+@app.post("/model/reload")
+def reload_model():
+    """Reload model from MLflow (useful after retraining)"""
+    try:
+        success = load_model_from_mlflow()
+        if success:
+            return {
+                "status": "success",
+                "message": "Model reloaded successfully",
+                "model_version": model_version,
+                "model_loaded": loaded_model is not None
+            }
+        else:
+            return {
+                "status": "warning",
+                "message": "Model reload attempted but using rule-based fallback",
+                "model_loaded": False
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Reload failed: {str(e)}")
+
+@app.post("/predict/batch")
+async def predict_batch(transactions: list[TransactionFeatures]):
     """
-    Thông tin về model đang sử dụng
+    Batch prediction for multiple transactions
+    Useful for processing accumulated transactions
     """
-    return {
-        "model_type": "rule_based",  # Will be "random_forest" or "logistic_regression"
-        "model_version": "1.0.0",
-        "framework": "sklearn",  # Will be from MLflow
-        "features_count": 15,
-        "trained_on": "sparkov_dataset",
-        "performance": {
-            "auc": "N/A",  # Will be loaded from MLflow
-            "accuracy": "N/A",
-            "precision": "N/A",
-            "recall": "N/A"
-        },
-        "status": "development"
-    }
+    try:
+        results = []
+        for features in transactions:
+            pred = await predict_fraud(features)
+            results.append(pred)
+        
+        # Summary statistics
+        total = len(results)
+        fraud_count = sum(1 for r in results if r.is_fraud_predicted == 1)
+        high_risk = sum(1 for r in results if r.risk_level == "HIGH")
+        
+        return {
+            "predictions": results,
+            "summary": {
+                "total_transactions": total,
+                "fraud_detected": fraud_count,
+                "fraud_rate": round(fraud_count / total * 100, 2) if total > 0 else 0,
+                "high_risk_count": high_risk,
+                "model_version": model_version if model_version else "rule_based_v1"
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Batch prediction error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Batch prediction error: {str(e)}")
 
 # To run locally for development: uvicorn app.main:app --host 0.0.0.0 --port 8000
