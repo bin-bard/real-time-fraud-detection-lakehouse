@@ -161,25 +161,24 @@ def model_retraining_pipeline():
                 logger.info("✅ MLflow experiments found")
                 verification_results["mlflow_experiments"] = True
                 
-                # Bonus: Check for recent runs (today)
-                from datetime import datetime
-                today = datetime.now().strftime('%Y%m%d')
-                
-                runs_result = subprocess.run(
-                    ['docker', 'exec', 'mlflow',
-                     'curl', '-s', 'http://localhost:5000/api/2.0/mlflow/runs/search',
-                     '-H', 'Content-Type: application/json',
-                     '-d', '{"max_results": 10}'],
-                    capture_output=True,
-                    text=True,
-                    timeout=10
-                )
-                
-                if 'run_id' in runs_result.stdout or 'run_uuid' in runs_result.stdout:
-                    logger.info("✅ Recent training runs detected")
-                    logger.info(f"Runs data (first 200 chars): {runs_result.stdout[:200]}")
-                else:
-                    logger.warning("⚠️ No recent runs, but experiments exist (might be old data)")
+                # Bonus: Check for recent runs using Python (mlflow container doesn't have curl)
+                try:
+                    runs_result = subprocess.run(
+                        ['docker', 'exec', 'mlflow', 'python', '-c',
+                         "import requests; r = requests.post('http://localhost:5000/api/2.0/mlflow/runs/search', "
+                         "json={'experiment_ids': ['1'], 'max_results': 5}); "
+                         "print('RUNS_FOUND' if 'runs' in r.json() and len(r.json()['runs']) > 0 else 'NO_RUNS')"],
+                        capture_output=True,
+                        text=True,
+                        timeout=15
+                    )
+                    
+                    if 'RUNS_FOUND' in runs_result.stdout:
+                        logger.info("✅ Recent training runs detected in experiment")
+                    else:
+                        logger.warning("⚠️ No recent runs, but experiments exist (might be old data)")
+                except Exception as e:
+                    logger.warning(f"⚠️ Could not verify runs: {e}")
                 
                 logger.info("=" * 60)
                 logger.info("✅ MODEL TRAINING VERIFICATION PASSED")
