@@ -366,10 +366,13 @@ class PredictionResponse(BaseModel):
 
 **6. Use Cases:**
 
-- **Alert System**: Gọi API real-time → Gửi cảnh báo nếu HIGH risk
-- **Dashboard Integration**: Metabase hiển thị predictions
-- **Manual Review**: Nhân viên kiểm tra giao dịch nghi ngờ
-- **Batch Processing**: Xử lý đợt lớn transactions overnight
+- **Alert System** (⚠️ CHƯA IMPLEMENT): Gọi API real-time → Tự tích hợp email/Slack nếu HIGH risk
+  - FastAPI trả về `risk_level: HIGH/MEDIUM/LOW` ✅
+  - NHƯNG không tự động gửi notification ❌
+  - Cần implement: `send_email()` hoặc `send_slack()` theo use case
+- **Dashboard Integration**: Metabase hiển thị predictions qua SQL views
+- **Manual Review**: Nhân viên kiểm tra giao dịch nghi ngờ qua API
+- **Batch Processing**: Xử lý đợt lớn transactions qua `/predict/batch`
 
 ---
 

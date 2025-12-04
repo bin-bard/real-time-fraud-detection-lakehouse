@@ -336,18 +336,128 @@ curl -X POST http://localhost:8000/model/reload
 
 ### Tích hợp vào Pipeline
 
-Để sử dụng API trong Silver layer:
+**Use Cases (Ví dụ tích hợp - chưa implement sẵn):**
 
 ```python
-# spark/app/silver_job.py (tích hợp tùy chọn)
+# 1. Alert System (Tự implement)
 import requests
+import smtplib
 
-def predict_fraud_api(features):
+def check_and_alert(transaction_features):
+    # Gọi API prediction
     response = requests.post(
         "http://fraud-detection-api:8000/predict",
-        json=features
+        json=transaction_features
     )
-    return response.json()
+    result = response.json()
+
+    # Gửi cảnh báo nếu HIGH risk
+    if result["risk_level"] == "HIGH":
+        send_email_alert(
+            subject=f"⚠️ High Risk Transaction: {result['trans_num']}",
+            body=f"Fraud Probability: {result['fraud_probability']:.2%}"
+        )
+        # Hoặc gửi Slack notification
+        send_slack_alert(result)
+
+# 2. Batch processing qua Spark
+def predict_batch_spark(df):
+    """Thêm predictions vào Silver layer"""
+    from pyspark.sql.functions import udf
+    from pyspark.sql.types import StructType, DoubleType, StringType
+
+    @udf(returnType=StructType([...]))
+    def predict_udf(features):
+        response = requests.post(
+            "http://fraud-detection-api:8000/predict",
+            json=features
+        )
+        return response.json()
+
+    return df.withColumn("prediction", predict_udf(...))
+```
+
+**⚠️ Lưu ý:** Alert System (email/Slack) là **use case đề xuất**, CHƯA được implement sẵn trong dự án. Bạn cần tự tích hợp dựa vào FastAPI response.
+
+## 📊 SQL Views cho Analytics
+
+### Tạo Views trong Trino
+
+File `sql/gold_layer_views_delta.sql` chứa 9 analytical views để:
+
+- Metabase query dễ hơn (không cần JOIN phức tạp)
+- Dashboard real-time metrics
+- Chatbot query natural language
+
+**Cách tạo views:**
+
+```bash
+# 1. Connect vào Trino
+docker exec -it trino trino --server localhost:8081
+
+# 2. Copy-paste từng CREATE VIEW statement từ file sql/gold_layer_views_delta.sql
+# Hoặc chạy toàn bộ file (nếu Trino hỗ trợ)
+```
+
+**9 Views được tạo:**
+
+1. **`daily_summary`** - Metrics tổng hợp theo ngày
+
+   ```sql
+   SELECT * FROM delta.gold.daily_summary
+   WHERE report_date >= CURRENT_DATE - INTERVAL '7' DAY;
+   ```
+
+2. **`hourly_summary`** - Phân tích patterns theo giờ
+
+   ```sql
+   SELECT hour, fraud_rate FROM delta.gold.hourly_summary
+   WHERE day = DAY(CURRENT_DATE)
+   ORDER BY hour;
+   ```
+
+3. **`state_summary`** - Top states có fraud rate cao
+
+   ```sql
+   SELECT * FROM delta.gold.state_summary
+   ORDER BY fraud_rate DESC LIMIT 10;
+   ```
+
+4. **`category_summary`** - Category nào rủi ro nhất
+
+   ```sql
+   SELECT * FROM delta.gold.category_summary
+   ORDER BY fraud_rate DESC;
+   ```
+
+5. **`amount_summary`** - Fraud rate theo khoảng tiền
+
+6. **`latest_metrics`** - Real-time metrics cho monitoring
+
+   ```sql
+   SELECT * FROM delta.gold.latest_metrics;
+   -- Có alert_level: HIGH/MEDIUM/LOW
+   ```
+
+7. **`fraud_patterns`** - Top fraud patterns
+
+8. **`merchant_analysis`** - Merchants nguy hiểm nhất
+
+9. **`time_period_analysis`** - Fraud rate theo Morning/Afternoon/Evening/Night
+
+**Sử dụng trong Metabase:**
+
+Sau khi tạo views, query đơn giản hơn:
+
+```sql
+-- Thay vì JOIN phức tạp:
+-- SELECT ... FROM fact_transactions f
+-- JOIN dim_customer c ON f.customer_key = c.customer_key
+-- JOIN dim_merchant m ON ...
+
+-- Chỉ cần:
+SELECT * FROM delta.gold.daily_summary;
+SELECT * FROM delta.gold.merchant_analysis;
 ```
 
 ## 🔧 Kết nối Metabase

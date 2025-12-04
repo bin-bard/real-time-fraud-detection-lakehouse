@@ -814,7 +814,110 @@ docker exec trino trino --server localhost:8081 --execute "SHOW TABLES FROM delt
 
 ---
 
-### Q11: FastAPI trả về "model not loaded"?
+### Q11: Alert System có hoạt động không?
+
+**A:** KHÔNG - Alert System chưa được implement!
+
+**Hiện trạng:**
+
+- ✅ FastAPI có endpoint `/predict` trả về `risk_level: HIGH/MEDIUM/LOW`
+- ✅ Code có thể detect high-risk transactions
+- ❌ KHÔNG có tự động gửi email/Slack/notification
+- ❌ Function `send_alert()` trong docs chỉ là **ví dụ giả định**
+
+**Để implement Alert System, bạn cần:**
+
+**Option 1: Email Alert**
+
+```python
+import smtplib
+from email.mime.text import MIMEText
+
+def send_email_alert(trans_num, probability):
+    msg = MIMEText(f"High risk: {trans_num} ({probability:.2%})")
+    msg['Subject'] = '⚠️ Fraud Alert'
+    msg['From'] = 'alert@company.com'
+    msg['To'] = 'security@company.com'
+
+    smtp = smtplib.SMTP('smtp.gmail.com', 587)
+    smtp.starttls()
+    smtp.login('your-email@gmail.com', 'app-password')
+    smtp.send_message(msg)
+    smtp.quit()
+```
+
+**Option 2: Slack Alert**
+
+```python
+import requests
+
+def send_slack_alert(result):
+    webhook_url = "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+    message = {
+        "text": f"🚨 High Risk: {result['trans_num']} ({result['fraud_probability']:.2%})"
+    }
+    requests.post(webhook_url, json=message)
+```
+
+**Sử dụng:**
+
+```python
+result = requests.post('http://localhost:8000/predict', json=features).json()
+if result['risk_level'] == 'HIGH':
+    send_email_alert(result['trans_num'], result['fraud_probability'])
+    # hoặc
+    send_slack_alert(result)
+```
+
+---
+
+### Q12: SQL Views có sẵn chưa?
+
+**A:** CHƯA - File `sql/gold_layer_views_delta.sql` CÓ code nhưng chưa execute!
+
+**File chứa 9 analytical views:**
+
+1. `daily_summary` - Metrics theo ngày
+2. `hourly_summary` - Patterns theo giờ
+3. `state_summary` - Fraud rate theo bang
+4. `category_summary` - Fraud rate theo category
+5. `amount_summary` - Fraud rate theo khoảng tiền
+6. `latest_metrics` - Real-time monitoring (có `alert_level`)
+7. `fraud_patterns` - Top fraud patterns
+8. `merchant_analysis` - Top risky merchants
+9. `time_period_analysis` - Morning/Afternoon/Evening/Night
+
+**Cách tạo views:**
+
+```bash
+# 1. Connect vào Trino
+docker exec -it trino trino --server localhost:8081
+
+# 2. Copy-paste từng CREATE VIEW từ file sql/gold_layer_views_delta.sql
+# Ví dụ:
+CREATE OR REPLACE VIEW delta.gold.daily_summary AS
+SELECT
+    DATE(transaction_timestamp) as report_date,
+    COUNT(*) as total_transactions,
+    SUM(CASE WHEN is_fraud = 1 THEN 1 ELSE 0 END) as fraud_transactions,
+    ...
+FROM delta.gold.fact_transactions
+GROUP BY DATE(transaction_timestamp);
+
+# 3. Verify
+SHOW TABLES FROM delta.gold;
+-- Nên thấy: 5 base tables + 9 views = 14 total
+```
+
+**Lợi ích:**
+
+- Metabase query đơn giản (không cần JOIN)
+- Dashboard real-time metrics
+- Performance tốt hơn (pre-aggregated)
+
+---
+
+### Q13: FastAPI trả về "model not loaded"?
 
 **A:** Kiểm tra các bước sau:
 
