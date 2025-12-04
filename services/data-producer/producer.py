@@ -4,6 +4,8 @@ import time
 import psycopg2
 from psycopg2.extras import execute_values
 import os
+import sys
+import argparse
 from datetime import datetime
 
 # --- Cấu hình ---
@@ -183,5 +185,133 @@ def send_transaction(cursor, index, row_data):
     except Exception as e:
         print(f"❌ Error sending transaction #{index}: {e}")
 
+def bulk_load_transactions(num_records=50000):
+    """
+    Bulk load initial data for ML training
+    Loads num_records quickly without time delay between transactions
+    """
+    print(f"🚀 BULK LOAD MODE: Loading {num_records} records...")
+    cursor = conn.cursor()
+    
+    # Check checkpoint
+    start_line = get_last_checkpoint()
+    print(f"📍 Starting from line {start_line}...")
+    
+    batch_size = 1000  # Insert 1000 records at a time for performance
+    batch = []
+    records_loaded = 0
+    
+    try:
+        with open(DATA_FILE, 'r') as file:
+            reader = csv.DictReader(file)
+            
+            # Skip processed lines
+            for _ in range(start_line):
+                next(reader, None)
+            
+            for i, row in enumerate(reader, start=start_line + 1):
+                if records_loaded >= num_records:
+                    break
+                    
+                try:
+                    # Prepare values tuple
+                    values = (
+                        row['trans_date_trans_time'],
+                        int(row['cc_num']),
+                        row['merchant'],
+                        row['category'],
+                        float(row['amt']),
+                        row['first'],
+                        row['last'],
+                        row['gender'],
+                        row['street'],
+                        row['city'],
+                        row['state'],
+                        int(row['zip']),
+                        float(row['lat']),
+                        float(row['long']),
+                        int(row['city_pop']),
+                        row['job'],
+                        row['dob'],
+                        row['trans_num'],
+                        int(row['unix_time']),
+                        float(row['merch_lat']),
+                        float(row['merch_long']),
+                        int(row['is_fraud'])
+                    )
+                    batch.append(values)
+                    records_loaded += 1
+                    
+                    # Batch insert when batch is full
+                    if len(batch) >= batch_size:
+                        insert_query = """
+                            INSERT INTO transactions (
+                                trans_date_trans_time, cc_num, merchant, category, amt,
+                                first, last, gender, street, city, state, zip,
+                                lat, long, city_pop, job, dob, trans_num, unix_time,
+                                merch_lat, merch_long, is_fraud
+                            ) VALUES %s
+                        """
+                        execute_values(cursor, insert_query, batch)
+                        conn.commit()
+                        
+                        save_checkpoint(i, row.get('trans_num'))
+                        print(f"✅ Bulk loaded {records_loaded}/{num_records} records...")
+                        batch = []
+                        
+                except Exception as e:
+                    print(f"⚠️ Error processing row {i}: {e}")
+                    conn.rollback()
+                    continue
+            
+            # Insert remaining batch
+            if batch:
+                insert_query = """
+                    INSERT INTO transactions (
+                        trans_date_trans_time, cc_num, merchant, category, amt,
+                        first, last, gender, street, city, state, zip,
+                        lat, long, city_pop, job, dob, trans_num, unix_time,
+                        merch_lat, merch_long, is_fraud
+                    ) VALUES %s
+                """
+                execute_values(cursor, insert_query, batch)
+                conn.commit()
+                save_checkpoint(i, row.get('trans_num'))
+                print(f"✅ Bulk loaded {records_loaded}/{num_records} records (final batch)")
+            
+            print(f"\n{'='*60}")
+            print(f"🎉 BULK LOAD COMPLETE!")
+            print(f"{'='*60}")
+            print(f"📊 Total records loaded: {records_loaded}")
+            print(f"📍 Final checkpoint: Line {i}")
+            print(f"✅ Ready for streaming mode")
+            print(f"{'='*60}\n")
+            
+    except FileNotFoundError:
+        print(f"❌ Error: Data file not found at {DATA_FILE}.")
+    except Exception as e:
+        print(f"❌ An error occurred during bulk load: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        if cursor:
+            conn.commit()
+            cursor.close()
+        if conn:
+            conn.close()
+            print("✅ PostgreSQL connection closed.")
+
+
 if __name__ == "__main__":
-    simulate_real_time_stream()
+    parser = argparse.ArgumentParser(description='Fraud Detection Data Producer')
+    parser.add_argument('--bulk-load', type=int, metavar='NUM_RECORDS',
+                       help='Bulk load NUM_RECORDS records quickly (e.g., --bulk-load 50000)')
+    
+    args = parser.parse_args()
+    
+    if args.bulk_load:
+        print(f"\n🚀 Running in BULK LOAD mode: {args.bulk_load} records")
+        bulk_load_transactions(args.bulk_load)
+    else:
+        print(f"\n🔄 Running in STREAMING mode")
+        simulate_real_time_stream()

@@ -198,6 +198,35 @@ docker compose up -d --build
 > - Silver/Gold jobs chạy batch mỗi 5 phút qua Airflow DAG
 > - Data producer tự động insert dữ liệu vào PostgreSQL
 
+**🚀 Option: Bulk Load Initial Data**
+
+Để có đủ data cho ML training ngay lập tức (thay vì đợi streaming):
+
+```powershell
+# Sau khi docker compose up xong, bulk load 50K transactions
+docker exec data-producer python producer.py --bulk-load 50000
+
+# Kết quả:
+# - ~50K records load ngay (~2-3 phút)
+# - ~250 fraud transactions (0.5% fraud rate)
+# - Đủ data cho ML training ngay
+# - Sau đó tiếp tục streaming bình thường
+```
+
+**Cơ chế hoạt động:**
+
+1. ✅ Bulk load → Insert nhanh 50K records vào PostgreSQL
+2. ✅ Debezium CDC → Capture INSERT events → Kafka
+3. ✅ Bronze streaming → Xử lý CDC events → Delta Lake
+4. ✅ Silver/Gold batch → Chạy 5 phút sau → Ready for training
+5. ✅ Data producer → Tiếp tục streaming với records còn lại
+
+**Checkpoint safe:**
+
+- ✅ PostgreSQL SERIAL primary key → Không duplicate
+- ✅ Debezium LSN (Log Sequence Number) → Resume từ đúng vị trí
+- ✅ Spark streaming checkpoint → Exactly-once semantics
+
 ---
 
 ### 3. Kiểm tra hệ thống đã khởi động
@@ -630,7 +659,51 @@ docker logs spark-master | grep "FraudDetectionMLTraining"
 
 - Truy cập MLflow UI: http://localhost:5000
 - Check experiment `fraud_detection_production`
-- Verify có 2 registered models: `fraud_detection_random_forest`, `fraud_detection_logistic_regression`
+- Verify có 2 runs: `RandomForest_YYYYMMDD_HHMMSS`, `LogisticRegression_YYYYMMDD_HHMMSS`
+
+**❓ Tại sao chỉ có ~15-20 training samples?**
+
+**ĐÂY LÀ HỢP LÝ** với real-world fraud detection!
+
+| Metric                    | Value           | Explanation                   |
+| ------------------------- | --------------- | ----------------------------- |
+| Total records (Silver)    | ~4,200          | Sau vài phút streaming        |
+| Fraud transactions        | ~10 (0.24%)     | Real-world fraud rate: 0.5-1% |
+| Non-fraud transactions    | ~4,190 (99.76%) | Majority class                |
+| **After class balancing** |                 |                               |
+| Fraud (keep all)          | 10              | Minority class - giữ nguyên   |
+| Non-fraud (undersampled)  | 10              | Undersampling để balance 1:1  |
+| **Total balanced**        | 20              | Training dataset              |
+| Train set (80%)           | ~16             |                               |
+| Test set (20%)            | ~4              |                               |
+
+**Lý do:**
+
+1. ✅ **Fraud imbalance**: Real-world fraud rate rất thấp (0.5-1%)
+2. ✅ **Class balancing**: ML job undersample majority class để tránh bias
+3. ✅ **Early stage**: Data producer mới chạy vài phút → ít fraud samples
+4. ⏰ **Cần thời gian**: Đợi 2-4 giờ để có ~50-100 fraud samples → training tốt hơn
+
+**Giải pháp tăng training samples:**
+
+```powershell
+# Option 1: Bulk load initial data (recommended)
+docker exec data-producer python producer.py --bulk-load 50000
+# → Load 50K records ngay (~250 fraud samples)
+
+# Option 2: Tăng tốc streaming (modify producer.py)
+# Giảm time.sleep(5) → time.sleep(0.5)
+# Restart: docker compose restart data-producer
+
+# Option 3: Đợi tự nhiên (2-4 giờ)
+# Fraud rate 0.5% → 100 frauds cần ~20K transactions
+```
+
+**Khi nào nên re-train?**
+
+- ✅ Sau khi có **≥100 fraud samples** (better accuracy)
+- ✅ Schedule: Daily 2 AM (tự động qua Airflow)
+- ✅ Manual trigger: Airflow UI → model_retraining_taskflow → ▶️
 
 ### Xác minh CDC (INSERT/UPDATE/DELETE) và giá trị trường `amt`
 

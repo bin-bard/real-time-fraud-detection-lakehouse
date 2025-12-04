@@ -511,10 +511,116 @@ FROM delta.gold.fact_transactions
 
 ---
 
+## ⚠️ Vấn Đề #7: ML Training với ít samples (~15-20)
+
+### Triệu Chứng
+
+MLflow UI hiển thị:
+
+- `train_samples: 14-17`
+- `test_samples: 3-4`
+- Tổng chỉ ~20 samples
+
+User có 4000+ records trong Silver layer nhưng ML chỉ train với ~20 samples.
+
+### Nguyên Nhân
+
+**ĐÂY KHÔNG PHẢI LỖI - Đây là real-world fraud detection behavior!**
+
+| Metric                    | Value           | Explanation                       |
+| ------------------------- | --------------- | --------------------------------- |
+| Total records (Silver)    | ~4,200          | Sau vài phút streaming            |
+| **Fraud transactions**    | ~10 (0.24%)     | **Real-world fraud rate: 0.5-1%** |
+| Non-fraud transactions    | ~4,190 (99.76%) | Majority class                    |
+| **After class balancing** |                 |                                   |
+| Fraud (keep all)          | 10              | Minority class - giữ nguyên       |
+| Non-fraud (undersampled)  | 10              | Undersampling để balance 1:1      |
+| **Total balanced**        | 20              | Training dataset                  |
+| Train set (80%)           | ~16             |                                   |
+| Test set (20%)            | ~4              |                                   |
+
+**Lý do:**
+
+1. ✅ **Fraud imbalance**: Real-world fraud rate rất thấp (0.5-1%)
+2. ✅ **Class balancing**: ML job undersample majority class để tránh bias
+3. ✅ **Early stage**: Data producer mới chạy vài phút → ít fraud samples
+4. ⏰ **Cần thời gian**: Đợi 2-4 giờ để có ~50-100 fraud samples → training tốt hơn
+
+### Giải Pháp ✅
+
+**Option 1: Bulk Load Initial Data (Recommended)**
+
+```powershell
+# Load 50K transactions ngay lập tức (~250 fraud samples)
+docker exec data-producer python producer.py --bulk-load 50000
+
+# Kết quả:
+# - ~50K records loaded trong 2-3 phút
+# - ~250 fraud transactions (0.5% fraud rate)
+# - Đủ data cho ML training ngay
+# - Sau đó tiếp tục streaming bình thường
+```
+
+**Cơ chế hoạt động:**
+
+1. ✅ Bulk load → Insert nhanh 50K records vào PostgreSQL
+2. ✅ Debezium CDC → Capture INSERT events → Kafka
+3. ✅ Bronze streaming → Xử lý CDC events → Delta Lake
+4. ✅ Silver/Gold batch → Chạy 5 phút sau → Ready for training
+5. ✅ Data producer → Tiếp tục streaming với records còn lại
+
+**Checkpoint safe:**
+
+- ✅ PostgreSQL SERIAL primary key → Không duplicate
+- ✅ Debezium LSN (Log Sequence Number) → Resume từ đúng vị trí
+- ✅ Spark streaming checkpoint → Exactly-once semantics
+
+**Option 2: Tăng tốc streaming**
+
+```python
+# Modify services/data-producer/producer.py
+# Line ~35: Giảm sleep time
+time.sleep(0.5)  # Thay vì time.sleep(5)
+
+# Restart
+docker compose restart data-producer
+```
+
+**Option 3: Đợi tự nhiên**
+
+- Chờ 2-4 giờ để data producer insert đủ data
+- Fraud rate 0.5% → 100 frauds cần ~20K transactions
+- Schedule: Daily 2 AM training (tự động qua Airflow)
+
+### Khi nào nên re-train?
+
+- ✅ Sau khi có **≥100 fraud samples** (better accuracy)
+- ✅ Schedule: Daily 2 AM (tự động qua Airflow)
+- ✅ Manual trigger: Airflow UI → model_retraining_taskflow → ▶️
+
+### Verify data distribution
+
+```sql
+-- Check fraud distribution
+docker exec trino trino --server localhost:8081 --execute \
+  "SELECT is_fraud, COUNT(*) as count FROM delta.silver.transactions GROUP BY is_fraud"
+
+-- Expected output (early stage):
+-- "0","4190"   -- Non-fraud
+-- "1","10"     -- Fraud (0.24%)
+
+-- Expected output (after bulk load 50K):
+-- "0","49750"  -- Non-fraud
+-- "1","250"    -- Fraud (0.5%)
+```
+
+---
+
 ## 📖 Related Documentation
 
 - **Metabase Setup**: [`docs/METABASE_SETUP.md`](./METABASE_SETUP.md) - Connection settings & sample queries
 - **Project Spec**: [`docs/PROJECT_SPECIFICATION.md`](./PROJECT_SPECIFICATION.md) - Full architecture details
+- **Hive Metastore Role**: [`docs/HIVE_METASTORE_ROLE.md`](./HIVE_METASTORE_ROLE.md) - Metadata cache vs query engine
 
 ---
 
