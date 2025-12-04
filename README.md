@@ -25,7 +25,7 @@ Dự án xây dựng pipeline xử lý dữ liệu end-to-end từ CDC (Change D
 | **Metastore**     | Hive Metastore 3.1.3 | 9083       | Cache metadata (tùy chọn)         |
 | **Truy vấn**      | Trino                | 8085       | Công cụ SQL phân tán              |
 | **Điều phối**     | Airflow 2.8.0        | 8081       | Lập lịch workflow                 |
-| **Theo dõi ML**   | MLflow 2.8.0         | 5000       | Theo dõi mô hình                  |
+| **Theo dõi ML**   | MLflow 2.8.0         | 5001       | Theo dõi mô hình                  |
 | **Trực quan hóa** | Metabase             | 3000       | Dashboard BI                      |
 | **API**           | FastAPI              | 8000       | Dự đoán thời gian thực (tùy chọn) |
 | **Chatbot**       | Streamlit + Gemini   | 8501       | Chat với database bằng tiếng Việt |
@@ -285,7 +285,7 @@ quit;
 | **Airflow**         | http://localhost:8081 | `admin` / `admin`        | Điều phối workflow                |
 | **Spark Master UI** | http://localhost:8080 | -                        | Giám sát các job Spark            |
 | **MinIO Console**   | http://localhost:9001 | `minio` / `minio123`     | Lưu trữ Data Lake                 |
-| **MLflow UI**       | http://localhost:5000 | -                        | Theo dõi mô hình ML               |
+| **MLflow UI**       | http://localhost:5001 | -                        | Theo dõi mô hình ML               |
 | **Kafka UI**        | http://localhost:9002 | -                        | Topics, messages, consumer groups |
 | **Trino UI**        | http://localhost:8085 | -                        | Giám sát công cụ truy vấn         |
 | **Metabase**        | http://localhost:3000 | (tạo admin lần đầu)      | Dashboard BI                      |
@@ -358,7 +358,7 @@ Airflow UI → `model_retraining_taskflow` → ▶️ Trigger DAG
 
 ### Kiểm tra mô hình
 
-- Truy cập: http://localhost:5000
+- Truy cập: http://localhost:5001
 - Thí nghiệm: `fraud_detection_production`
 - Kiểm tra các lần chạy: RandomForest, LogisticRegression
 
