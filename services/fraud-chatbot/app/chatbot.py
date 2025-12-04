@@ -27,6 +27,7 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 # Trino connection
 TRINO_HOST = os.getenv("TRINO_HOST", "trino")
 TRINO_PORT = os.getenv("TRINO_PORT", "8081")
+TRINO_USER = os.getenv("TRINO_USER", "admin")
 TRINO_CATALOG = os.getenv("TRINO_CATALOG", "delta")
 TRINO_SCHEMA = os.getenv("TRINO_SCHEMA", "gold")
 
@@ -41,11 +42,34 @@ POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "postgres")
 # DATABASE CONNECTIONS
 # ============================================================
 
-@st.cache_resource
+# KHÔNG cache để tránh lỗi 401 từ connection cũ
 def get_trino_db():
     """Kết nối Trino Delta Lake"""
-    trino_uri = f"trino://{TRINO_HOST}:{TRINO_PORT}/{TRINO_CATALOG}/{TRINO_SCHEMA}"
-    db = SQLDatabase.from_uri(trino_uri)
+    from sqlalchemy import create_engine
+    from sqlalchemy.pool import NullPool
+    
+    # Build URI với username từ environment variable
+    trino_uri = f"trino://{TRINO_USER}@{TRINO_HOST}:{TRINO_PORT}/{TRINO_CATALOG}/{TRINO_SCHEMA}"
+    
+    # Tạo engine đơn giản - username đã có trong URI
+    engine = create_engine(
+        trino_uri,
+        connect_args={"http_scheme": "http"},
+        poolclass=NullPool,
+        echo=False
+    )
+    
+    # Tạo SQLDatabase
+    db = SQLDatabase(
+        engine,
+        sample_rows_in_table_info=0,
+        include_tables=[
+            'fact_transactions', 'dim_customer', 'dim_merchant', 'dim_time', 'dim_date',
+            'daily_summary', 'hourly_summary', 'state_summary', 'category_summary',
+            'amount_summary', 'latest_metrics', 'fraud_patterns', 'merchant_analysis',
+            'time_period_analysis'
+        ]
+    )
     return db
 
 @st.cache_resource
@@ -213,7 +237,7 @@ def main():
     # Page config
     st.set_page_config(
         page_title="Fraud Detection Chatbot",
-        page_icon="🤖",
+        page_icon="🕵️",  # Detective emoji
         layout="wide"
     )
     
@@ -223,7 +247,7 @@ def main():
     
     # Sidebar
     with st.sidebar:
-        st.title("🤖 Fraud Chatbot")
+        st.title("🕵️ Fraud Chatbot")
         st.markdown("---")
         
         # API Key status
@@ -280,12 +304,34 @@ def main():
         # Test connection
         if st.button("🔌 Test Connection"):
             try:
-                db = get_trino_db()
-                tables = db.get_usable_table_names()
-                st.success(f"✅ Kết nối thành công!\n\n**Tables:** {', '.join(tables[:5])}")
+                # Test bằng query trực tiếp, KHÔNG dùng get_usable_table_names() (gây lỗi 401)
+                from sqlalchemy import create_engine, text
+                
+                trino_uri = f"trino://{TRINO_USER}@{TRINO_HOST}:{TRINO_PORT}/{TRINO_CATALOG}/{TRINO_SCHEMA}"
+                engine = create_engine(
+                    trino_uri,
+                    connect_args={"http_scheme": "http"}
+                )
+                
+                # Query đơn giản để test
+                with engine.connect() as conn:
+                    result = conn.execute(text("SELECT COUNT(*) as total FROM fact_transactions"))
+                    count = result.fetchone()[0]
+                
+                st.success(f"✅ Kết nối thành công!\n\n**Fact Transactions:** {count:,} records")
                 st.session_state.db_connected = True
             except Exception as e:
                 st.error(f"❌ Lỗi kết nối: {str(e)}")
+                import traceback
+                with st.expander("🔍 Chi tiết lỗi"):
+                    st.code(traceback.format_exc())
+        
+        # Clear cache button
+        st.markdown("---")
+        if st.button("🗑️ Clear Cache", use_container_width=True):
+            st.cache_resource.clear()
+            st.success("✅ Cache đã xóa! Nhấn Ctrl+R để reload.")
+            st.rerun()
         
         st.markdown("---")
         

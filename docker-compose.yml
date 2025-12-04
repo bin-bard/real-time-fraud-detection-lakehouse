@@ -504,6 +504,7 @@ services:
       # Trino connection
       - TRINO_HOST=trino
       - TRINO_PORT=8081
+      - TRINO_USER=admin
       - TRINO_CATALOG=delta
       - TRINO_SCHEMA=gold
       # PostgreSQL for chat history
