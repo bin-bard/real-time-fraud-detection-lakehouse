@@ -141,10 +141,12 @@ def model_retraining_pipeline():
         try:
             logger.info("📊 Checking MLflow experiments...")
             
-            # Check MLflow experiments exist (most reliable)
+            # Check MLflow experiments using Python (mlflow container doesn't have curl)
             exp_result = subprocess.run(
-                ['docker', 'exec', 'mlflow', 
-                 'curl', '-s', 'http://localhost:5000/api/2.0/mlflow/experiments/search'],
+                ['docker', 'exec', 'mlflow', 'python', '-c',
+                 "import requests; "
+                 "r = requests.get('http://localhost:5000/api/2.0/mlflow/experiments/search'); "
+                 "print(r.text)"],
                 capture_output=True,
                 text=True,
                 check=True,
@@ -161,7 +163,7 @@ def model_retraining_pipeline():
                 logger.info("✅ MLflow experiments found")
                 verification_results["mlflow_experiments"] = True
                 
-                # Bonus: Check for recent runs using Python (mlflow container doesn't have curl)
+                # Bonus: Check for recent runs
                 try:
                     runs_result = subprocess.run(
                         ['docker', 'exec', 'mlflow', 'python', '-c',
@@ -182,7 +184,7 @@ def model_retraining_pipeline():
                 
                 logger.info("=" * 60)
                 logger.info("✅ MODEL TRAINING VERIFICATION PASSED")
-                logger.info("   Check MLflow UI for details: http://localhost:5000")
+                logger.info("   Check MLflow UI for details: http://localhost:5001")
                 logger.info("=" * 60)
                 verification_results["status"] = "verified"
                 return verification_results
