@@ -48,13 +48,12 @@ def lakehouse_pipeline():
         logger.info("Checking Bronze layer for new data...")
         
         try:
-            # Check if bronze-streaming container is running via docker-compose
+            # Check if bronze-streaming container is running via docker ps
             result = subprocess.run(
-                ['docker-compose', '-f', '/workspace/docker-compose.yml', 'ps', '-q', 'bronze-streaming'],
+                ['docker', 'ps', '--filter', 'name=bronze-streaming', '--filter', 'status=running', '-q'],
                 capture_output=True,
                 text=True,
-                check=False,
-                cwd='/workspace'
+                check=False
             )
             
             if result.stdout.strip():

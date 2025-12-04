@@ -377,7 +377,10 @@ services:
 
   # Airflow Webserver
   airflow-webserver:
-    image: apache/airflow:2.8.0-python3.9
+    build:
+      context: ./deployment/airflow
+      dockerfile: Dockerfile
+    image: custom-airflow:2.8.0-docker
     container_name: airflow-webserver
     depends_on:
       - airflow-db
@@ -392,6 +395,7 @@ services:
       - AIRFLOW_GID=0
       - _PIP_ADDITIONAL_REQUIREMENTS=
       - DOCKER_HOST=unix:///var/run/docker.sock
+      - DOCKER_API_VERSION=1.44
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
@@ -402,9 +406,6 @@ services:
       - "8081:8080"
     command: >
       bash -c "
-      curl -fsSL https://get.docker.com -o get-docker.sh &&
-      sh get-docker.sh --version 24.0 &&
-      rm get-docker.sh &&
       airflow db init &&
       airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com || true &&
       airflow webserver
@@ -416,7 +417,10 @@ services:
 
   # Airflow Scheduler
   airflow-scheduler:
-    image: apache/airflow:2.8.0-python3.9
+    build:
+      context: ./deployment/airflow
+      dockerfile: Dockerfile
+    image: custom-airflow:2.8.0-docker
     container_name: airflow-scheduler
     depends_on:
       - airflow-db
@@ -430,19 +434,14 @@ services:
       - AIRFLOW_UID=50000
       - AIRFLOW_GID=0
       - DOCKER_HOST=unix:///var/run/docker.sock
+      - DOCKER_API_VERSION=1.44
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
       - ./airflow/plugins:/opt/airflow/plugins
       - /var/run/docker.sock:/var/run/docker.sock
       - .:/workspace
-    command: >
-      bash -c "
-      curl -fsSL https://get.docker.com -o get-docker.sh &&
-      sh get-docker.sh --version 24.0 &&
-      rm get-docker.sh &&
-      airflow scheduler
-      "
+    command: scheduler
     networks:
       - data_network
     restart: unless-stopped
