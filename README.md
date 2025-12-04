@@ -118,6 +118,7 @@ Query Layer (Trino + Metabase)
 ```
 
 **Lợi ích:**
+
 - ✅ **Bronze Layer**: Real-time CDC capture từ Kafka (streaming liên tục)
 - ✅ **Silver Layer**: Feature engineering mỗi 5 phút (batch) - giảm 60% CPU
 - ✅ **Gold Layer**: Star schema mỗi 5 phút (batch) - data sẵn sàng cho analytics
@@ -127,6 +128,7 @@ Query Layer (Trino + Metabase)
 ### Delta Lake Integration
 
 **Không sử dụng Hive Metastore** - Delta Lake tự quản lý metadata qua `_delta_log/`:
+
 - ✅ ACID transactions
 - ✅ Time travel (Delta Lake history)
 - ✅ Schema evolution với `overwriteSchema=true`
@@ -177,12 +179,14 @@ docker logs -f hive-registration   # Hive: Auto-register tables (every 1 hour)
 #### Verify thành công
 
 **Bronze streaming** (continuous):
+
 ```
 Writing batch 100 to Bronze layer...
 Batch 100 written to Bronze successfully.
 ```
 
 **Silver batch** (every 5 minutes):
+
 ```
 🥈 Starting Bronze to Silver layer BATCH processing...
 Found 86427 new records to process
@@ -191,6 +195,7 @@ Found 86427 new records to process
 ```
 
 **Gold batch** (every 5 minutes):
+
 ```
 ✨ Gold layer batch processing completed!
 📊 Processed 86527 records from Silver layer
@@ -203,6 +208,7 @@ Found 86427 new records to process
 ```
 
 **Hive registration** (auto, every 1 hour):
+
 ```
 🔧 Hive Metastore Registration Service
 ⏳ Waiting for Gold layer to have data...
@@ -225,6 +231,7 @@ docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}"
 ```
 
 **Output mong đợi:**
+
 ```
 bronze-streaming   195.96%   935.5MiB / 7.76GiB
 silver-job         0.00%     219.5MiB / 7.76GiB
@@ -240,6 +247,7 @@ gold-job           0.00%     2.555MiB / 7.76GiB
 ### 4. Cấu trúc Spark Jobs
 
 #### Bronze Layer (`streaming_job.py`)
+
 - **Mode**: Structured Streaming (continuous)
 - **Input**: Kafka topic `postgres.public.transactions`
 - **Processing**: Parse Debezium CDC format (`$.after.*`)
@@ -247,9 +255,10 @@ gold-job           0.00%     2.555MiB / 7.76GiB
 - **Partitioning**: By `year`, `month`, `day`
 
 #### Silver Layer (`silver_job.py`)
+
 - **Mode**: Batch (every 5 minutes)
 - **Input**: Bronze Delta Lake
-- **Processing**: 
+- **Processing**:
   - Data quality checks
   - Type casting (String → Double/Long/Date)
   - Feature engineering (40 features)
@@ -258,9 +267,10 @@ gold-job           0.00%     2.555MiB / 7.76GiB
 - **Config**: Ancient date support (`datetimeRebaseModeInWrite=LEGACY`)
 
 #### Gold Layer (`gold_job.py`)
+
 - **Mode**: Batch (every 5 minutes)
 - **Input**: Silver Delta Lake
-- **Processing**: 
+- **Processing**:
   - Star schema transformation
   - Hash-based surrogate keys
   - Incremental processing
@@ -283,7 +293,7 @@ gold-job           0.00%     2.555MiB / 7.76GiB
 **Luồng xử lý hoàn chỉnh (End-to-End):**
 
 ```
-PostgreSQL INSERT → Debezium CDC → Kafka 
+PostgreSQL INSERT → Debezium CDC → Kafka
   ↓ (Bronze Streaming - Auto)
 Bronze Layer (Delta Lake)
   ↓ (Silver Streaming - 30s trigger)
@@ -293,6 +303,7 @@ Gold Layer (Star Schema: 4 Dims + 1 Fact)
 ```
 
 **Ưu điểm kiến trúc streaming:**
+
 - ✅ **Near Real-time**: Độ trễ ~30-60 giây từ INSERT đến Gold
 - ✅ **Tự động**: Không cần trigger thủ công
 - ✅ **Scalable**: Xử lý được millions records/day
@@ -315,12 +326,12 @@ SHOW CATALOGS;
 SELECT COUNT(*) FROM delta.default."s3a://lakehouse/bronze/transactions";
 
 -- Query Silver layer (với features)
-SELECT trans_num, amt, distance_km, age, is_fraud 
+SELECT trans_num, amt, distance_km, age, is_fraud
 FROM delta.default."s3a://lakehouse/silver/transactions"
 LIMIT 10;
 
 -- Query Gold layer - Star Schema
-SELECT 
+SELECT
   f.transaction_amount,
   c.first_name || ' ' || c.last_name AS customer_name,
   m.merchant_name,
@@ -341,6 +352,7 @@ LIMIT 20;
 
 | Service             | URL                   | Username / Password                             | Ghi chú                                           |
 | ------------------- | --------------------- | ----------------------------------------------- | ------------------------------------------------- |
+| **Airflow**         | http://localhost:8081 | `admin` / `admin`                               | Workflow orchestration & DAG management           |
 | Spark Master UI     | http://localhost:8080 | Không cần                                       | Monitoring Spark jobs                             |
 | MinIO Console       | http://localhost:9001 | `minio` / `minio123`                            | Quản lý buckets và files (Data Lake)              |
 | MLflow UI           | http://localhost:5000 | Không cần                                       | ML model tracking & registry                      |
@@ -357,8 +369,79 @@ LIMIT 20;
 >
 > - **MinIO, PostgreSQL:** Credentials cố định trong `docker-compose.yml` (có thể đổi trước khi khởi động).
 > - **Metabase:** Tạo tài khoản admin khi truy cập lần đầu, email/password tùy chọn (ví dụ: `admin@admin.com` / `admin123`).
+> - **Airflow:** Tài khoản mặc định `admin/admin` (đã được tự động tạo khi khởi động).
 > - **Spark UI, Kafka UI, Trino UI:** Không yêu cầu đăng nhập.
-> - **Airflow, MLflow:** Chưa được khởi động trong docker-compose hiện tại (có thể thêm sau).
+
+---
+
+### 7. Airflow Workflow Orchestration
+
+Hệ thống sử dụng **Apache Airflow 2.8.0** để quản lý các workflow batch processing:
+
+#### Truy cập Airflow UI
+
+```bash
+# URL: http://localhost:8081
+# Username: admin
+# Password: admin
+```
+
+#### DAGs có sẵn
+
+**1. `lakehouse_pipeline_taskflow`** - Lakehouse ETL Pipeline (TaskFlow API)
+
+- **Schedule**: Mỗi 5 phút (`*/5 * * * *`)
+- **Tasks**:
+  1. `check_bronze_data` - Kiểm tra Bronze streaming đang chạy
+  2. `run_silver_transformation` - Chạy Silver job (Bronze → Features)
+  3. `run_gold_transformation` - Chạy Gold job (Silver → Star Schema)
+  4. `register_tables_to_hive` - Đăng ký Delta tables vào Hive Metastore
+  5. `verify_trino_access` - Verify Trino có thể query tables
+  6. `send_pipeline_summary` - Tổng kết kết quả
+
+**2. `model_retraining_taskflow`** - Automated ML Model Retraining (TaskFlow API)
+
+- **Schedule**: Hàng ngày lúc 02:00 (`0 2 * * *`)
+- **Tasks**:
+  1. `stop_streaming_jobs` - Dừng Silver/Gold streaming để giải phóng CPU
+  2. `verify_jobs_stopped` - Kiểm tra jobs đã dừng hoàn toàn
+  3. `check_data_availability` - Validate Silver layer có đủ dữ liệu
+  4. `train_ml_models` - Huấn luyện RandomForest + LogisticRegression
+  5. `verify_models_registered` - Check MLflow có 2 registered models
+  6. `restart_streaming_jobs` - Khởi động lại Silver/Gold streaming
+  7. `send_notification` - Thông báo kết quả training
+
+#### Trigger DAG thủ công
+
+```bash
+# Qua Airflow UI
+# 1. Truy cập http://localhost:8081
+# 2. Click vào DAG name
+# 3. Click nút "Trigger DAG" (play button)
+
+# Hoặc qua CLI
+docker exec airflow-scheduler airflow dags trigger lakehouse_pipeline_taskflow
+docker exec airflow-scheduler airflow dags trigger model_retraining_taskflow
+```
+
+#### Xem logs của task
+
+```bash
+# Qua UI: DAG → Run → Task → Logs
+
+# Hoặc qua CLI
+docker exec airflow-scheduler airflow tasks logs lakehouse_pipeline_taskflow run_silver_transformation <execution_date>
+```
+
+**Lợi ích TaskFlow API:**
+
+- Code gọn gàng, dễ đọc hơn Operator-based
+- Tự động handle XCom giữa các tasks
+- Type hints support
+- Retry tự động khi fail
+- Log chi tiết từng bước
+
+---
 
 ### 5. Kiểm tra Pipeline
 
@@ -437,6 +520,7 @@ docker exec trino trino --server localhost:8081 --execute "SHOW TABLES FROM delt
 ```
 
 **Output mong đợi:**
+
 ```
 "dim_customer"
 "dim_location"
@@ -463,7 +547,7 @@ docker exec trino trino --server localhost:8081 --execute "SHOW TABLES FROM delt
 
 ```sql
 -- Fraud rate by merchant category
-SELECT 
+SELECT
   dm.category,
   COUNT(*) as total_transactions,
   SUM(CASE WHEN ft.is_fraud = true THEN 1 ELSE 0 END) as fraud_count,
@@ -474,7 +558,7 @@ GROUP BY dm.category
 ORDER BY fraud_rate DESC;
 
 -- Geographic fraud distribution
-SELECT 
+SELECT
   dl.state,
   COUNT(*) as total_transactions,
   SUM(CASE WHEN ft.is_fraud = true THEN 1 ELSE 0 END) as fraud_count
@@ -486,6 +570,7 @@ LIMIT 10;
 ```
 
 **📖 Chi tiết:**
+
 - **Setup guide:** [`docs/METABASE_SETUP.md`](docs/METABASE_SETUP.md) - Connection settings & 7 sample queries
 - **Troubleshooting:** [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) - Giải quyết các vấn đề thường gặp
 
@@ -509,7 +594,7 @@ docker logs bronze-streaming --tail 50
 # Check Silver batch
 docker logs silver-job --tail 50
 
-# Check Gold batch  
+# Check Gold batch
 docker logs gold-job --tail 50
 
 # Check Spark Master
@@ -519,11 +604,13 @@ docker logs spark-master
 #### Common issues
 
 **High CPU usage**:
+
 - Bronze streaming: ~195% CPU (bình thường)
 - Silver/Gold batch: 0% CPU khi sleep, spike khi chạy (bình thường)
 - Nếu cả 3 jobs đều >200% CPU: Xem xét giảm batch size hoặc tăng sleep interval
 
 **Job fails to start**:
+
 - Check Spark Master UI: http://localhost:8080
 - Verify MinIO accessible: http://localhost:9001
 - Check Kafka messages: `docker logs kafka`
@@ -573,11 +660,13 @@ Metabase Dashboard / Analytics
 ```
 
 **Latency:**
+
 - Bronze: Real-time (~1-2 seconds from PostgreSQL INSERT)
 - Silver: 5-10 minutes (batch interval + processing time)
 - Gold: 10-15 minutes (waits for Silver + processing time)
 
 **Resource Usage:**
+
 - Bronze: 195% CPU (continuous streaming)
 - Silver: 0% CPU (95% of time), spike when processing
 - Gold: 0% CPU (95% of time), spike when processing
@@ -587,18 +676,18 @@ Metabase Dashboard / Analytics
 
 ### 10. Services Container Map
 
-| Service             | URL                   | Credentials             | Purpose                                  |
-| ------------------- | --------------------- | ----------------------- | ---------------------------------------- |
-| Spark Master UI     | http://localhost:8080 | None                    | Monitor Spark jobs & resource allocation |
-| MinIO Console       | http://localhost:9001 | minio / minio123        | S3-compatible Data Lake storage          |
-| Trino UI            | http://localhost:8085 | None                    | Distributed SQL query engine             |
-| Metabase            | http://localhost:3000 | (setup on first visit)  | BI Dashboard & visualization             |
-| MLflow UI           | http://localhost:5000 | None                    | ML model tracking & registry             |
-| Kafka UI            | http://localhost:9002 | None                    | Kafka topics & messages monitoring       |
-| Fraud Detection API | http://localhost:8000 | None                    | Real-time prediction endpoint (future)   |
-| Kafka Broker        | localhost:9092        | None                    | Message streaming platform               |
-| PostgreSQL          | localhost:5432        | postgres / postgres     | Source database (frauddb)                |
-| Hive Metastore      | localhost:9083        | None (Thrift)           | Table metadata store for Trino           |
+| Service             | URL                   | Credentials            | Purpose                                  |
+| ------------------- | --------------------- | ---------------------- | ---------------------------------------- |
+| Spark Master UI     | http://localhost:8080 | None                   | Monitor Spark jobs & resource allocation |
+| MinIO Console       | http://localhost:9001 | minio / minio123       | S3-compatible Data Lake storage          |
+| Trino UI            | http://localhost:8085 | None                   | Distributed SQL query engine             |
+| Metabase            | http://localhost:3000 | (setup on first visit) | BI Dashboard & visualization             |
+| MLflow UI           | http://localhost:5000 | None                   | ML model tracking & registry             |
+| Kafka UI            | http://localhost:9002 | None                   | Kafka topics & messages monitoring       |
+| Fraud Detection API | http://localhost:8000 | None                   | Real-time prediction endpoint (future)   |
+| Kafka Broker        | localhost:9092        | None                   | Message streaming platform               |
+| PostgreSQL          | localhost:5432        | postgres / postgres    | Source database (frauddb)                |
+| Hive Metastore      | localhost:9083        | None (Thrift)          | Table metadata store for Trino           |
 
 ---
 
@@ -614,7 +703,7 @@ Metabase Dashboard / Analytics
 ✅ **Trino Query Engine**: Distributed SQL with Hive Metastore integration  
  **Auto Registration**: Tables auto-register to Metastore every hour  
  **Metabase Ready**: Pre-configured for BI dashboards and visualizations  
-✅ **60% CPU Reduction**: From 300%+ to ~195% by moving to batch processing  
+✅ **60% CPU Reduction**: From 300%+ to ~195% by moving to batch processing
 
 ---
 
@@ -627,10 +716,8 @@ Xem file `docs/PROJECT_SPECIFICATION.md` để hiểu rõ:
 - Data flow và processing layers
 - ML pipeline specifications
 
-
-##  Additional Documentation
+## Additional Documentation
 
 - **[METABASE_SETUP.md](docs/METABASE_SETUP.md)** - Complete Metabase setup guide with 7 sample fraud detection queries
 - **[TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** - Detailed solutions for 6 major issues encountered during setup
 - **[PROJECT_SPECIFICATION.md](docs/PROJECT_SPECIFICATION.md)** - Full architecture specifications and requirements
-

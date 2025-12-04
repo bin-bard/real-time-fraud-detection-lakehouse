@@ -357,64 +357,6 @@ services:
       timeout: 10s
       retries: 3
 
-  # Silver Layer Batch Job (Bronze → Features) - Chạy mỗi 5 phút
-  silver-job:
-    build:
-      context: ./spark
-      dockerfile: Dockerfile
-    container_name: silver-job
-    depends_on:
-      - bronze-streaming
-    environment:
-      - SPARK_LOCAL_DIRS=/tmp/spark
-      - RUN_MODE=batch # Batch mode
-    volumes:
-      - ./spark/app:/app
-      - silver_ivy_cache:/home/spark/.ivy2
-    command: bash /app/run_silver.sh
-    networks:
-      - data_network
-    restart: unless-stopped
-
-  # Gold Layer Batch Job (Silver → Star Schema) - Chạy mỗi 5 phút
-  gold-job:
-    build:
-      context: ./spark
-      dockerfile: Dockerfile
-    container_name: gold-job
-    depends_on:
-      - silver-job
-    environment:
-      - SPARK_LOCAL_DIRS=/tmp/spark
-      - RUN_MODE=batch # Batch mode
-    volumes:
-      - ./spark/app:/app
-      - gold_ivy_cache:/home/spark/.ivy2
-    command: bash /app/run_gold.sh
-    networks:
-      - data_network
-    restart: unless-stopped
-
-  # Hive Metastore Registration - Tự động register Delta tables (chạy 1 lần)
-  hive-registration:
-    build:
-      context: ./spark
-      dockerfile: Dockerfile
-    container_name: hive-registration
-    depends_on:
-      - gold-job
-      - hive-metastore
-      - trino
-    environment:
-      - SPARK_LOCAL_DIRS=/tmp/spark
-    volumes:
-      - ./spark/app:/app
-      - ./deployment/hive-registration:/setup
-    command: bash /setup/register-and-loop.sh
-    networks:
-      - data_network
-    restart: unless-stopped
-
   # ============================================
   # AIRFLOW SERVICES (Orchestration Layer)
   # ============================================
@@ -503,8 +445,6 @@ volumes:
   metabase_db:
   airflow_db:
   bronze_ivy_cache:
-  silver_ivy_cache:
-  gold_ivy_cache:
 
 networks:
   data_network:
