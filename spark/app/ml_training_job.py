@@ -1,14 +1,15 @@
 from pyspark.sql import SparkSession
 from pyspark.ml.feature import VectorAssembler, MinMaxScaler
-from pyspark.ml.classification import RandomForestClassifier, LogisticRegression, GBTClassifier, DecisionTreeClassifier
+from pyspark.ml.classification import RandomForestClassifier, LogisticRegression
 from pyspark.ml.evaluation import BinaryClassificationEvaluator, MulticlassClassificationEvaluator
 from pyspark.ml import Pipeline
-from pyspark.sql.functions import col, when, lit, isnan, isnull, count as spark_count
+from pyspark.sql.functions import col, when, lit, isnan, isnull
 from pyspark.sql.types import DoubleType, IntegerType
 import mlflow
 import mlflow.spark
 import logging
 import os
+import sys
 from datetime import datetime
 
 # Configure MLflow S3 artifact storage
@@ -21,12 +22,19 @@ os.environ["GIT_PYTHON_REFRESH"] = "quiet"
 mlflow.set_tracking_uri("http://mlflow:5000")
 mlflow.set_experiment("fraud_detection_production")
 
-# Logging configuration
+# Logging configuration - with stdout flush for Airflow visibility
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger(__name__)
+
+def log_step(step_name, message):
+    """Log with step prefix for Airflow visibility"""
+    full_message = f"[STEP: {step_name}] {message}"
+    logger.info(full_message)
+    sys.stdout.flush()  # Force flush to appear in Airflow logs immediately
 
 def create_spark_session():
     """Initialize Spark Session with Delta Lake"""
@@ -47,32 +55,41 @@ def create_spark_session():
 
 def prepare_features(df):
     """
-    Feature engineering based on Kaggle best practices
+    Feature engineering - MUST match exactly with Silver layer features
     """
-    logger.info("🔧 Preparing features for ML training...")
+    log_step("FEATURE_PREP", "🔧 Preparing features for ML training...")
     
-    # Select features similar to Kaggle notebook
+    # IMPORTANT: These features MUST exist in Silver layer
+    # Check silver_job.py feature_engineering() function
     feature_cols = [
-        # Transaction amount features
+        # Transaction amount features (from silver_job.py)
         "amt", "log_amount", "is_zero_amount", "is_high_amount", "amount_bin",
         
-        # Geographic features (similar to lat, long, merch_lat, merch_long in Kaggle)
+        # Geographic features (from silver_job.py)
         "distance_km", "is_distant_transaction",
         "lat", "long", "merch_lat", "merch_long", "city_pop",
         
-        # Demographic features (age from dob like Kaggle)
+        # Demographic features (from silver_job.py)
         "age", "gender_encoded",
         
-        # Time features (trans_hour, trans_dayofweek in Kaggle)
+        # Time features (from silver_job.py)
         "hour", "day_of_week", "is_weekend", "is_late_night",
         "hour_sin", "hour_cos"
     ]
     
-    # Check available columns
+    # Check available columns and warn if missing
     available_features = [f for f in feature_cols if f in df.columns]
-    logger.info(f"📊 Using {len(available_features)} features: {available_features}")
+    missing_features = [f for f in feature_cols if f not in df.columns]
+    
+    if missing_features:
+        log_step("FEATURE_PREP", f"⚠️ WARNING: Missing features from Silver layer: {missing_features}")
+        log_step("FEATURE_PREP", "These features will be skipped from training")
+    
+    log_step("FEATURE_PREP", f"📊 Using {len(available_features)}/{len(feature_cols)} features")
+    log_step("FEATURE_PREP", f"Features: {', '.join(available_features[:10])}{'...' if len(available_features) > 10 else ''}")
     
     # Fill missing values with median (Kaggle approach)
+    log_step("FEATURE_PREP", "Filling missing values with median...")
     for feat in available_features:
         # Get median value
         median_vals = df.filter(col(feat).isNotNull() & ~isnan(col(feat))) \
@@ -86,6 +103,7 @@ def prepare_features(df):
         )
     
     # Vector assembler
+    log_step("FEATURE_PREP", "Creating feature vector...")
     assembler = VectorAssembler(
         inputCols=available_features,
         outputCol="features_raw",
@@ -93,11 +111,13 @@ def prepare_features(df):
     )
     
     # MinMax Scaler (0-1 normalization like Kaggle)
+    log_step("FEATURE_PREP", "Creating MinMax scaler (0-1 normalization)...")
     scaler = MinMaxScaler(
         inputCol="features_raw",
         outputCol="features"
     )
     
+    log_step("FEATURE_PREP", "✅ Feature preparation complete")
     return assembler, scaler, available_features
 
 def handle_class_imbalance(df, label_col="label"):
@@ -105,7 +125,7 @@ def handle_class_imbalance(df, label_col="label"):
     Handle imbalanced data - Kaggle approach
     Undersample majority class to balance dataset
     """
-    logger.info("⚖️ Handling class imbalance...")
+    log_step("CLASS_BALANCE", "⚖️ Handling class imbalance...")
     
     # Count fraud and non-fraud
     fraud_df = df.filter(col(label_col) == 1).cache()
@@ -114,14 +134,17 @@ def handle_class_imbalance(df, label_col="label"):
     fraud_count = fraud_df.count()
     nonfraud_count = nonfraud_df.count()
     
-    logger.info(f"Original distribution: Fraud={fraud_count}, Non-Fraud={nonfraud_count}")
+    log_step("CLASS_BALANCE", f"Original distribution: Fraud={fraud_count}, Non-Fraud={nonfraud_count}")
+    if nonfraud_count > 0:
+        log_step("CLASS_BALANCE", f"Imbalance ratio: {(nonfraud_count/fraud_count):.2f}:1 (non-fraud:fraud)")
     
     if fraud_count == 0:
-        logger.error("❌ No fraud samples found!")
+        log_step("CLASS_BALANCE", "❌ ERROR: No fraud samples found!")
         return None
     
     # Undersample non-fraud to match fraud count (1:1 ratio like Kaggle)
-    fraction = min(1.0, fraud_count / nonfraud_count)
+    fraction = min(1.0, fraud_count / nonfraud_count) if nonfraud_count > 0 else 1.0
+    log_step("CLASS_BALANCE", f"Undersampling non-fraud with fraction={fraction:.4f}")
     nonfraud_sampled = nonfraud_df.sample(withReplacement=False, fraction=fraction, seed=42)
     
     # Combine and shuffle
@@ -130,37 +153,46 @@ def handle_class_imbalance(df, label_col="label"):
     final_fraud = balanced_df.filter(col(label_col) == 1).count()
     final_nonfraud = balanced_df.filter(col(label_col) == 0).count()
     
-    logger.info(f"Balanced distribution: Fraud={final_fraud}, Non-Fraud={final_nonfraud}")
+    log_step("CLASS_BALANCE", f"Balanced distribution: Fraud={final_fraud}, Non-Fraud={final_nonfraud}")
+    log_step("CLASS_BALANCE", "✅ Class balancing complete")
     
     return balanced_df
 
-def train_model(spark, model_name="GradientBoosting"):
+def train_model(spark, model_name="RandomForest"):
     """
     Train fraud detection model following Kaggle best practices
-    Models: RandomForest, DecisionTree, LogisticRegression, GradientBoosting
+    Models: RandomForest, LogisticRegression
     """
-    logger.info(f"🚀 Starting model training: {model_name}")
-    logger.info(f"⏰ Training started at: {datetime.now()}")
+    log_step("INIT", f"🚀 Starting model training: {model_name}")
+    log_step("INIT", f"⏰ Training started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
     silver_path = "s3a://lakehouse/silver/transactions"
     
     try:
         # Load data from Silver layer
-        logger.info("📥 Loading data from Silver layer...")
+        log_step("DATA_LOAD", "📥 Loading data from Silver layer...")
+        log_step("DATA_LOAD", f"Reading from: {silver_path}")
         df = spark.read.format("delta").load(silver_path)
         
         initial_count = df.count()
-        logger.info(f"Initial dataset: {initial_count} records")
+        log_step("DATA_LOAD", f"✅ Loaded {initial_count} records from Silver layer")
+        
+        # Show schema to verify features exist
+        log_step("DATA_LOAD", "Verifying Silver layer schema...")
+        available_cols = df.columns
+        log_step("DATA_LOAD", f"Available columns: {len(available_cols)} columns")
         
         # Filter extreme transaction amounts (similar to Kaggle: amt >= 5 and <= 1250)
-        logger.info("🔍 Filtering extreme transaction amounts...")
+        log_step("DATA_FILTER", "🔍 Filtering extreme transaction amounts (5 <= amt <= 1250)...")
         df = df.filter((col("amt") >= 5) & (col("amt") <= 1250))
         filtered_count = df.count()
-        logger.info(f"After filtering: {filtered_count} records (removed {initial_count - filtered_count})")
+        log_step("DATA_FILTER", f"After filtering: {filtered_count} records (removed {initial_count - filtered_count})")
         
         # Prepare label
+        log_step("DATA_PREP", "Preparing label column...")
         df = df.withColumn("label", col("is_fraud").cast(IntegerType()))
         df = df.filter(col("label").isNotNull())
+        log_step("DATA_PREP", "✅ Label column prepared (0=Normal, 1=Fraud)")
         
         # Prepare features
         assembler, scaler, feature_cols = prepare_features(df)
@@ -169,118 +201,119 @@ def train_model(spark, model_name="GradientBoosting"):
         df = handle_class_imbalance(df, "label")
         
         if df is None:
-            logger.error("❌ Failed to balance dataset")
+            log_step("ERROR", "❌ Failed to balance dataset")
             return False
         
         # Train-test split (80-20 like Kaggle)
+        log_step("DATA_SPLIT", "Splitting data into train/test (80/20)...")
         train_df, test_df = df.randomSplit([0.8, 0.2], seed=42)
         
         train_count = train_df.count()
         test_count = test_df.count()
-        logger.info(f"📊 Train/Test split: {train_count}/{test_count}")
+        log_step("DATA_SPLIT", f"Train set: {train_count} samples")
+        log_step("DATA_SPLIT", f"Test set: {test_count} samples")
+        log_step("DATA_SPLIT", "✅ Data split complete")
         
         # Cache for performance
+        log_step("OPTIMIZATION", "Caching datasets for better performance...")
         train_df = train_df.cache()
         test_df = test_df.cache()
+        log_step("OPTIMIZATION", "✅ Datasets cached")
         
-        # Select classifier (Kaggle models)
+        # Select classifier - Only RandomForest and LogisticRegression
+        log_step("MODEL_CONFIG", f"Configuring {model_name} classifier...")
+        
         if model_name == "RandomForest":
+            log_step("MODEL_CONFIG", "Parameters: numTrees=200, maxDepth=30, minInstancesPerNode=1")
             classifier = RandomForestClassifier(
                 featuresCol="features",
                 labelCol="label",
-                numTrees=200,  # Kaggle uses 200
+                numTrees=200,
                 maxDepth=30,
                 minInstancesPerNode=1,
                 seed=42
             )
-        elif model_name == "DecisionTree":
-            classifier = DecisionTreeClassifier(
-                featuresCol="features",
-                labelCol="label",
-                maxDepth=30,
-                seed=42
-            )
         elif model_name == "LogisticRegression":
+            log_step("MODEL_CONFIG", "Parameters: maxIter=1000, regParam=0.0, elasticNetParam=0.0")
             classifier = LogisticRegression(
                 featuresCol="features",
                 labelCol="label",
-                maxIter=1000,  # Kaggle uses 1000
+                maxIter=1000,
                 regParam=0.0,
                 elasticNetParam=0.0,
-                standardization=False  # Already scaled
+                standardization=False
             )
-        else:  # GradientBoosting
-            classifier = GBTClassifier(
-                featuresCol="features",
-                labelCol="label",
-                maxIter=300,  # Kaggle: n_estimators=300
-                maxDepth=3,   # Kaggle: max_depth=3
-                stepSize=0.05,  # Kaggle: learning_rate=0.05
-                seed=42
-            )
+        else:
+            log_step("ERROR", f"❌ Unknown model: {model_name}")
+            return False
+        
+        log_step("MODEL_CONFIG", "✅ Classifier configured")
         
         # Create pipeline
+        log_step("PIPELINE", "Creating ML pipeline (assembler → scaler → classifier)...")
         pipeline = Pipeline(stages=[assembler, scaler, classifier])
+        log_step("PIPELINE", "✅ Pipeline created")
         
         # Start MLflow run
-        with mlflow.start_run(run_name=f"{model_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"):
+        run_name = f"{model_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        log_step("MLFLOW", f"Starting MLflow run: {run_name}")
+        
+        with mlflow.start_run(run_name=run_name):
             
             # Log parameters
+            log_step("MLFLOW", "Logging parameters to MLflow...")
             mlflow.log_param("model", model_name)
             mlflow.log_param("train_samples", train_count)
             mlflow.log_param("test_samples", test_count)
             mlflow.log_param("num_features", len(feature_cols))
-            mlflow.log_param("features", feature_cols)
+            mlflow.log_param("features", ",".join(feature_cols[:10]) + ("..." if len(feature_cols) > 10 else ""))
             
             if model_name == "RandomForest":
                 mlflow.log_param("num_trees", 200)
                 mlflow.log_param("max_depth", 30)
-            elif model_name == "GradientBoosting":
-                mlflow.log_param("max_iter", 300)
-                mlflow.log_param("max_depth", 3)
-                mlflow.log_param("step_size", 0.05)
             elif model_name == "LogisticRegression":
                 mlflow.log_param("max_iter", 1000)
             
+            log_step("MLFLOW", "✅ Parameters logged")
+            
             # Train model
-            logger.info(f"🏋️ Training {model_name}...")
+            log_step("TRAINING", f"🏋️ Training {model_name} model...")
+            log_step("TRAINING", "This may take several minutes...")
             start_time = datetime.now()
             model = pipeline.fit(train_df)
             training_duration = (datetime.now() - start_time).total_seconds()
-            logger.info(f"✅ Training completed in {training_duration:.2f} seconds")
+            log_step("TRAINING", f"✅ Training completed in {training_duration:.2f} seconds ({training_duration/60:.2f} minutes)")
             
             # Predictions
-            logger.info("🔮 Making predictions...")
+            log_step("PREDICTION", "🔮 Making predictions on test set...")
             predictions = model.transform(test_df)
+            log_step("PREDICTION", "✅ Predictions complete")
             
             # Evaluation
-            logger.info("📈 Evaluating model...")
+            log_step("EVALUATION", "📈 Evaluating model performance...")
             
             # Binary metrics
-            binary_evaluator = BinaryClassificationEvaluator(
-                labelCol="label",
-                rawPredictionCol="rawPrediction"
-            )
+            binary_evaluator = BinaryClassificationEvaluator(labelCol="label", rawPredictionCol="rawPrediction")
             auc = binary_evaluator.evaluate(predictions, {binary_evaluator.metricName: "areaUnderROC"})
             
             # Multiclass metrics
             multiclass_evaluator = MulticlassClassificationEvaluator(labelCol="label", predictionCol="prediction")
-            
             accuracy = multiclass_evaluator.evaluate(predictions, {multiclass_evaluator.metricName: "accuracy"})
             precision = multiclass_evaluator.evaluate(predictions, {multiclass_evaluator.metricName: "weightedPrecision"})
             recall = multiclass_evaluator.evaluate(predictions, {multiclass_evaluator.metricName: "weightedRecall"})
             f1 = multiclass_evaluator.evaluate(predictions, {multiclass_evaluator.metricName: "f1"})
             
-            # Confusion matrix calculations
+            # Confusion matrix
             tp = predictions.filter((col("label") == 1) & (col("prediction") == 1)).count()
             tn = predictions.filter((col("label") == 0) & (col("prediction") == 0)).count()
             fp = predictions.filter((col("label") == 0) & (col("prediction") == 1)).count()
             fn = predictions.filter((col("label") == 1) & (col("prediction") == 0)).count()
-            
-            # Specificity (True Negative Rate)
             specificity = tn / (tn + fp) if (tn + fp) > 0 else 0.0
             
+            log_step("EVALUATION", "✅ Evaluation complete")
+            
             # Log metrics
+            log_step("MLFLOW", "Logging metrics to MLflow...")
             mlflow.log_metric("accuracy", accuracy)
             mlflow.log_metric("precision", precision)
             mlflow.log_metric("recall", recall)
@@ -288,84 +321,88 @@ def train_model(spark, model_name="GradientBoosting"):
             mlflow.log_metric("f1_score", f1)
             mlflow.log_metric("auc", auc)
             mlflow.log_metric("training_duration_seconds", training_duration)
-            
-            # Log confusion matrix values
             mlflow.log_metric("true_positives", tp)
             mlflow.log_metric("true_negatives", tn)
             mlflow.log_metric("false_positives", fp)
             mlflow.log_metric("false_negatives", fn)
             
             # Log model
-            mlflow.spark.log_model(
-                model,
-                "model",
-                registered_model_name=f"fraud_detection_{model_name.lower()}"
-            )
+            log_step("MLFLOW", "Saving model to MLflow...")
+            mlflow.spark.log_model(model, "model", registered_model_name=f"fraud_detection_{model_name.lower()}")
+            log_step("MLFLOW", f"✅ Model registered: fraud_detection_{model_name.lower()}")
             
-            # Print results (Kaggle-style)
-            logger.info("\n" + "="*60)
-            logger.info(f"📊 Model Performance: {model_name}")
-            logger.info("="*60)
-            logger.info(f"Accuracy:     {accuracy:.4f}")
-            logger.info(f"Precision:    {precision:.4f}")
-            logger.info(f"Recall:       {recall:.4f}")
-            logger.info(f"Specificity:  {specificity:.4f}")
-            logger.info(f"F1-Score:     {f1:.4f}")
-            logger.info(f"AUC:          {auc:.4f}")
-            logger.info("="*60)
-            logger.info("\nConfusion Matrix:")
-            logger.info(f"True Positives:  {tp}")
-            logger.info(f"True Negatives:  {tn}")
-            logger.info(f"False Positives: {fp}")
-            logger.info(f"False Negatives: {fn}")
-            logger.info("="*60 + "\n")
+            # Print results
+            log_step("RESULTS", "=" * 60)
+            log_step("RESULTS", f"📊 Model Performance: {model_name}")
+            log_step("RESULTS", "=" * 60)
+            log_step("RESULTS", f"Accuracy:     {accuracy:.4f}")
+            log_step("RESULTS", f"Precision:    {precision:.4f}")
+            log_step("RESULTS", f"Recall:       {recall:.4f}")
+            log_step("RESULTS", f"Specificity:  {specificity:.4f}")
+            log_step("RESULTS", f"F1-Score:     {f1:.4f}")
+            log_step("RESULTS", f"AUC:          {auc:.4f}")
+            log_step("RESULTS", "=" * 60)
+            log_step("RESULTS", "Confusion Matrix:")
+            log_step("RESULTS", f"  True Positives:  {tp} (Correctly detected fraud)")
+            log_step("RESULTS", f"  True Negatives:  {tn} (Correctly detected normal)")
+            log_step("RESULTS", f"  False Positives: {fp} (Normal flagged as fraud)")
+            log_step("RESULTS", f"  False Negatives: {fn} (Fraud missed)")
+            log_step("RESULTS", "=" * 60)
         
+        log_step("SUCCESS", f"✅ {model_name} training completed successfully!")
         return True
         
     except Exception as e:
-        logger.error(f"❌ Error in model training: {str(e)}")
+        log_step("ERROR", f"❌ Error in model training: {str(e)}")
         import traceback
-        logger.error(traceback.format_exc())
+        log_step("ERROR", traceback.format_exc())
         return False
 
 def train_all_models():
-    """
-    Train all models and compare (like Kaggle notebook)
-    """
-    logger.info("🎯 Starting comprehensive model training...")
-    logger.info("="*60)
+    """Train RandomForest and LogisticRegression models"""
+    log_step("START", "=" * 60)
+    log_step("START", "🎯 Starting Fraud Detection Model Training")
+    log_step("START", "Models: RandomForest, LogisticRegression")
+    log_step("START", "=" * 60)
     
+    log_step("SPARK", "Initializing Spark session...")
     spark = create_spark_session()
     spark.sparkContext.setLogLevel("WARN")
+    log_step("SPARK", "✅ Spark session created")
     
-    # Models to train (same as Kaggle)
-    models = ["RandomForest", "DecisionTree", "LogisticRegression", "GradientBoosting"]
-    
+    models = ["RandomForest", "LogisticRegression"]
     results = []
+    
     try:
-        for model_name in models:
-            logger.info(f"\n{'='*60}")
-            logger.info(f"Training: {model_name}")
-            logger.info(f"{'='*60}\n")
+        for idx, model_name in enumerate(models, 1):
+            log_step("PROGRESS", "")
+            log_step("PROGRESS", "=" * 60)
+            log_step("PROGRESS", f"Training Model {idx}/{len(models)}: {model_name}")
+            log_step("PROGRESS", "=" * 60)
             
             success = train_model(spark, model_name)
             results.append({"model": model_name, "success": success})
             
             if success:
-                logger.info(f"✅ {model_name} training completed successfully")
+                log_step("PROGRESS", f"✅ {model_name} completed")
             else:
-                logger.error(f"❌ {model_name} training failed")
+                log_step("PROGRESS", f"❌ {model_name} failed")
             
     finally:
+        log_step("CLEANUP", "Stopping Spark session...")
         spark.stop()
-        logger.info("\n" + "="*60)
-        logger.info("🎉 All model training completed!")
-        logger.info("="*60)
-        logger.info("\nResults Summary:")
+        log_step("CLEANUP", "✅ Spark session stopped")
+        
+        log_step("SUMMARY", "")
+        log_step("SUMMARY", "=" * 60)
+        log_step("SUMMARY", "🎉 Model Training Pipeline Completed!")
+        log_step("SUMMARY", "=" * 60)
+        log_step("SUMMARY", "Results Summary:")
         for result in results:
             status = "✅ Success" if result["success"] else "❌ Failed"
-            logger.info(f"  {result['model']}: {status}")
-        logger.info("="*60)
+            log_step("SUMMARY", f"  {result['model']}: {status}")
+        log_step("SUMMARY", "=" * 60)
+        log_step("SUMMARY", "📊 Check MLflow UI: http://localhost:5000")
 
 if __name__ == "__main__":
     train_all_models()
