@@ -33,7 +33,7 @@ default_args = {
     description='Lakehouse ETL Pipeline: Bronze → Silver → Gold → Hive Registration',
     schedule_interval='*/5 * * * *',  # Every 5 minutes
     start_date=datetime(2025, 1, 1),
-    catchup=False,
+    catchup=False,  # Don't run missed schedules on startup
     tags=['lakehouse', 'etl', 'taskflow', 'silver', 'gold'],
     max_active_runs=1,  # Prevent concurrent runs
 )
@@ -48,21 +48,22 @@ def lakehouse_pipeline():
         logger.info("Checking Bronze layer for new data...")
         
         try:
-            # Check if bronze-streaming container is running
+            # Check if bronze-streaming container is running via docker-compose
             result = subprocess.run(
-                ['docker', 'ps', '--filter', 'name=bronze-streaming', '--format', '{{.Status}}'],
+                ['docker-compose', '-f', '/workspace/docker-compose.yml', 'ps', '-q', 'bronze-streaming'],
                 capture_output=True,
                 text=True,
-                check=True
+                check=False,
+                cwd='/workspace'
             )
             
-            if 'Up' in result.stdout:
-                logger.info("✅ Bronze streaming is running")
+            if result.stdout.strip():
+                logger.info("✅ Bronze streaming container exists")
                 return {"status": "ready", "bronze_running": True}
             else:
-                logger.warning("⚠️ Bronze streaming is not running")
+                logger.warning("⚠️ Bronze streaming container not found")
                 return {"status": "not_ready", "bronze_running": False}
-        except subprocess.CalledProcessError as e:
+        except Exception as e:
             logger.error(f"❌ Failed to check Bronze status: {e}")
             return {"status": "error", "bronze_running": False}
 

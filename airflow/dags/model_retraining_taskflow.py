@@ -35,9 +35,9 @@ default_args = {
     dag_id='model_retraining_taskflow',
     default_args=default_args,
     description='Automated ML model retraining using TaskFlow API',
-    schedule_interval='0 2 * * *',  # 2 AM daily
+    schedule_interval='0 2 * * *',  # Daily at 2 AM
     start_date=datetime(2025, 1, 1),
-    catchup=False,
+    catchup=False,  # Don't run missed schedules on startup
     tags=['ml', 'fraud-detection', 'taskflow'],
 )
 def model_retraining_pipeline():
