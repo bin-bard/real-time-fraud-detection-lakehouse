@@ -1,6 +1,20 @@
 """
 Register Delta Lake tables to Hive Metastore
-Giúp Trino có thể query qua hive catalog
+
+⚠️ LƯU Ý QUAN TRỌNG:
+- Hive Metastore chỉ là METADATA CACHE cho Delta catalog
+- Query thực tế vẫn đi qua Delta connector (delta.bronze.*, delta.silver.*, delta.gold.*)
+- KHÔNG query qua hive catalog (hive.*) - sẽ lỗi "Cannot query Delta Lake table"
+
+Lợi ích:
+✅ SHOW TABLES/SCHEMAS nhanh hơn (không scan S3 mỗi lần)
+✅ Metabase/DBeaver discover tables nhanh
+✅ Tương thích với legacy tools chỉ biết Hive Metastore
+
+Có thể bỏ script này KHÔNG?
+- CÓ - Delta connector tự discover tables từ _delta_log/
+- NHƯNG: Sẽ chậm hơn khi list tables (phải scan MinIO)
+- KHUYẾN NGHỊ: Giữ lại để tối ưu performance
 """
 
 from pyspark.sql import SparkSession
@@ -184,12 +198,17 @@ def main():
             logger.warning(f"Database {db} not found")
     
     logger.info("\n✅ Registration completed!")
-    logger.info("🔍 Verify in Trino CLI:")
-    logger.info("   docker exec -it trino trino")
+    logger.info("\n⚠️  QUAN TRỌNG: Hive catalog CHỈ LIST được tables, KHÔNG QUERY được!")
+    logger.info("   Lý do: Hive connector không hiểu Delta format")
+    logger.info("\n🔍 Verify metadata registration (Hive catalog):")
+    logger.info("   docker exec -it trino trino --server localhost:8081")
     logger.info("   SHOW CATALOGS;")
     logger.info("   SHOW SCHEMAS FROM hive;")
-    logger.info("   SHOW TABLES FROM hive.gold;")
-    logger.info("   SELECT * FROM hive.gold.fact_transactions LIMIT 5;")
+    logger.info("   SHOW TABLES FROM hive.gold;  ← OK")
+    logger.info("   SELECT * FROM hive.gold.fact_transactions;  ← LỖI!")
+    logger.info("\n✅ Query data (Delta catalog):")
+    logger.info("   SHOW TABLES FROM delta.gold;")
+    logger.info("   SELECT * FROM delta.gold.fact_transactions LIMIT 5;  ← ĐÚNG!")
     
     spark.stop()
 

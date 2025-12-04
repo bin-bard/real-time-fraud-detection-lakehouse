@@ -461,7 +461,7 @@ services:
 volumes:
   postgres_data:
   minio_data:
-  metastore_db:  # Re-enabled with smart schema check in entrypoint.sh
+  metastore_db: # Re-enabled with smart schema check in entrypoint.sh
   mlflow_db:
   metabase_db:
   airflow_db:

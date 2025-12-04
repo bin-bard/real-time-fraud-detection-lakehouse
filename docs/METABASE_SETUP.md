@@ -2,24 +2,41 @@
 
 ## ✅ Status: Ready for Metabase Connection
 
-All Delta Lake tables have been successfully registered to Hive Metastore and are queryable via Trino.
+**Delta Lake tables** are **directly queryable** via Trino's **Delta catalog** - no Hive registration needed!
+
+### Why Delta Catalog?
+
+- ✅ **Native support**: Trino's Delta connector reads `_delta_log/` transaction logs
+- ✅ **Full features**: ACID transactions, time travel, schema evolution
+- ✅ **Better performance**: Direct S3/MinIO access without Hive overhead
+- ❌ **Hive catalog limitation**: Cannot read Delta format ("Cannot query Delta Lake table" error)
+
+### Recommendation:
+
+- Use `delta` catalog for all queries: `delta.bronze.*`, `delta.silver.*`, `delta.gold.*`
+- Ignore `hive` catalog - it's for legacy Parquet/ORC tables only
 
 ## 📊 Available Tables
 
 ### Bronze Layer (Raw CDC Data)
+
 - `delta.bronze.transactions` - 25,000+ records
 
 ### Silver Layer (Feature Engineered)
+
 - `delta.silver.transactions` - 25,000+ records
 
 ### Gold Layer (Star Schema for Analytics)
+
 **Dimension Tables:**
+
 - `delta.gold.dim_customer` - Customer dimension
-- `delta.gold.dim_merchant` - Merchant dimension  
+- `delta.gold.dim_merchant` - Merchant dimension
 - `delta.gold.dim_time` - Time dimension
 - `delta.gold.dim_location` - Location dimension
 
 **Fact Table:**
+
 - `delta.gold.fact_transactions` - 25,000+ transaction facts
 
 ---
@@ -36,17 +53,18 @@ Connection Settings:
   Host: trino
   Port: 8081
   Catalog: delta
-  Database: gold        # or 'bronze'/'silver' for raw data
-  
+  Database: gold # or 'bronze'/'silver' for raw data
+
 Authentication:
   Username: (leave empty)
   Password: (leave empty)
-  
+
 Advanced Options:
   SSL: No
 ```
 
 ### Important Notes:
+
 - **Host**: Use `trino` (Docker service name) if Metabase runs in same Docker network
 - **Host**: Use `localhost` if Metabase runs outside Docker
 - **Port**: Internal port is `8081`, external is `8085`
@@ -57,17 +75,19 @@ Advanced Options:
 ## 📈 Sample Queries for Fraud Detection Dashboards
 
 > **⚠️ Important Notes:**
+>
 > - **Trino Syntax**: DO NOT use semicolons (`;`) at the end of queries - Trino will throw error
 > - **Boolean Values**: Use `is_fraud = 1` (not `is_fraud = true`) - stored as INTEGER
-> - **Column Names**: 
+> - **Column Names**:
 >   - Use `transaction_amount` (not `amt`)
 >   - Use `transaction_category` (not `category`)
 >   - Fact table stores attributes directly (denormalized) - some dimensions only used for enrichment
 > - All queries below are tested and ready to use in Metabase
 
 ### 1. Fraud Transactions by Category
+
 ```sql
-SELECT 
+SELECT
     transaction_category,
     COUNT(*) as total_transactions,
     SUM(CASE WHEN is_fraud = 1 THEN 1 ELSE 0 END) as fraud_count,
@@ -78,8 +98,9 @@ ORDER BY fraud_rate DESC
 ```
 
 ### 2. Top 10 High-Risk Merchants
+
 ```sql
-SELECT 
+SELECT
     merchant,
     transaction_category,
     COUNT(*) as total_txn,
@@ -94,8 +115,9 @@ LIMIT 10
 ```
 
 ### 3. Fraud Trends Over Time
+
 ```sql
-SELECT 
+SELECT
     YEAR(transaction_timestamp) as year,
     MONTH(transaction_timestamp) as month,
     DATE_FORMAT(transaction_timestamp, '%M') as month_name,
@@ -109,8 +131,9 @@ ORDER BY year, month
 ```
 
 ### 4. Geographic Fraud Distribution
+
 ```sql
-SELECT 
+SELECT
     dc.customer_state as state,
     dc.customer_city as city,
     COUNT(*) as total_transactions,
@@ -126,8 +149,9 @@ LIMIT 20
 ```
 
 ### 5. Customer Risk Profile
+
 ```sql
-SELECT 
+SELECT
     dc.gender,
     COUNT(DISTINCT dc.customer_key) as total_customers,
     COUNT(*) as total_transactions,
@@ -141,9 +165,10 @@ ORDER BY fraud_rate DESC
 ```
 
 ### 6. Transaction Amount Distribution by Fraud Status
+
 ```sql
-SELECT 
-    CASE 
+SELECT
+    CASE
         WHEN transaction_amount < 50 THEN '0-50'
         WHEN transaction_amount < 100 THEN '50-100'
         WHEN transaction_amount < 200 THEN '100-200'
@@ -154,8 +179,8 @@ SELECT
     SUM(CASE WHEN is_fraud = 1 THEN 1 ELSE 0 END) as fraud_count,
     ROUND(100.0 * SUM(CASE WHEN is_fraud = 1 THEN 1 ELSE 0 END) / COUNT(*), 2) as fraud_rate
 FROM delta.gold.fact_transactions
-GROUP BY 
-    CASE 
+GROUP BY
+    CASE
         WHEN transaction_amount < 50 THEN '0-50'
         WHEN transaction_amount < 100 THEN '50-100'
         WHEN transaction_amount < 200 THEN '100-200'
@@ -166,8 +191,9 @@ ORDER BY fraud_rate DESC
 ```
 
 ### 7. Real-time Fraud Detection Rate (Last 24 Hours)
+
 ```sql
-SELECT 
+SELECT
     transaction_hour as hour,
     COUNT(*) as transactions,
     SUM(CASE WHEN is_fraud = 1 THEN 1 ELSE 0 END) as frauds,
@@ -183,28 +209,33 @@ ORDER BY transaction_hour
 ## 🎨 Dashboard Recommendations
 
 ### 1. Executive Summary Dashboard
+
 - **KPIs**: Total transactions, fraud count, fraud rate, total loss amount
-- **Charts**: 
+- **Charts**:
   - Fraud trends line chart (monthly)
   - Category fraud rate bar chart
   - Geographic heatmap
 
 ### 2. Merchant Analysis Dashboard
+
 - **Top merchants by fraud rate** (table)
 - **Category breakdown** (pie chart)
 - **Merchant risk matrix** (scatter plot: volume vs fraud rate)
 
 ### 3. Customer Behavior Dashboard
+
 - **Customer demographics** (bar charts)
 - **Transaction patterns** (time series)
 - **Risk segmentation** (funnel chart)
 
 ### 4. Geographic Risk Dashboard
+
 - **State-level fraud map** (choropleth)
 - **Top risky cities** (table)
 - **Regional trends** (line charts)
 
 ### 5. Real-time Monitoring Dashboard
+
 - **Live transaction feed** (last 100 transactions)
 - **Hourly fraud rate** (gauge)
 - **Alert threshold indicators**
@@ -214,6 +245,7 @@ ORDER BY transaction_hour
 ## 🔄 Data Refresh
 
 Tables are automatically refreshed:
+
 - **Bronze**: Real-time CDC from Kafka
 - **Silver**: Processed every 30 seconds
 - **Gold**: Updated every 60 seconds
@@ -239,13 +271,13 @@ docker exec trino trino --server localhost:8081 --execute "SELECT * FROM delta.g
 
 # Check record counts
 docker exec trino trino --server localhost:8081 --execute "
-SELECT 
+SELECT
     'bronze.transactions' as table_name, COUNT(*) as records FROM delta.bronze.transactions
 UNION ALL
-SELECT 
+SELECT
     'silver.transactions', COUNT(*) FROM delta.silver.transactions
 UNION ALL
-SELECT 
+SELECT
     'gold.fact_transactions', COUNT(*) FROM delta.gold.fact_transactions
 "
 ```
@@ -255,16 +287,19 @@ SELECT
 ## 🚀 Quick Start Guide
 
 1. **Start Metabase** (if not running):
+
    ```bash
    docker-compose up -d metabase
    ```
 
 2. **Access Metabase UI**:
+
    ```
    http://localhost:3000
    ```
 
 3. **Add Database**:
+
    - Settings → Admin → Databases → Add Database
    - Select "Trino"
    - Fill in connection settings (see above)
@@ -272,6 +307,7 @@ SELECT
    - Save
 
 4. **Browse Data**:
+
    - Click "Browse Data"
    - Select "Fraud Detection Lakehouse"
    - Explore `gold` schema tables
@@ -287,16 +323,19 @@ SELECT
 ## 🐛 Troubleshooting
 
 ### Connection Failed
+
 - **Check Trino status**: `docker ps | grep trino`
 - **Check Trino logs**: `docker logs trino --tail 50`
 - **Verify port**: Ensure port 8085 is exposed if accessing externally
 
 ### Tables Not Visible
+
 - **Verify registration**: `docker logs hive-registration --tail 30`
 - **Check Hive Metastore**: `docker logs hive-metastore --tail 30`
 - **Re-register**: `docker-compose restart hive-registration`
 
 ### Query Errors
+
 - **Check Trino query logs**: Look in Trino logs for SQL errors
 - **Verify table schema**: `DESCRIBE delta.gold.fact_transactions`
 - **Test simple query first**: `SELECT COUNT(*) FROM delta.gold.fact_transactions`

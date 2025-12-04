@@ -243,14 +243,17 @@ Log thành công:
 docker exec -it trino trino --server localhost:8081
 ```
 
-```sql
--- Kiểm tra số lượng records
-SELECT COUNT(*) FROM hive.bronze.transactions;
-SELECT COUNT(*) FROM hive.silver.transactions;
-SELECT COUNT(*) FROM hive.gold.fact_transactions;
+````sql
+-- ⚠️ IMPORTANT: Query via DELTA catalog (not HIVE)
+-- Hive catalog can list tables but cannot query Delta format
 
--- Exit
-quit;
+-- Kiểm tra số lượng records
+SELECT COUNT(*) FROM delta.bronze.transactions;
+SELECT COUNT(*) FROM delta.silver.transactions;
+SELECT COUNT(*) FROM delta.gold.fact_transactions;
+
+-- Sample data
+SELECT * FROM delta.gold.fact_transactions LIMIT 5;
 
 -- Exit
 quit;
@@ -368,15 +371,24 @@ http://localhost:8081 → lakehouse_pipeline_taskflow → run_gold_transformatio
 **Trigger:** Sau khi Gold job hoàn thành  
 **Tables registered:** 7 tables (Bronze, Silver, Gold)
 
-```sql
--- Verify trong Trino
-docker exec -it trino trino --server localhost:8081
+**⚠️ IMPORTANT:** Hive catalog chỉ để list tables. **Query phải dùng Delta catalog!**
 
+```bash
+docker exec -it trino trino --server localhost:8081
+```
+
+```sql
+-- List tables (OK với Hive catalog)
 SHOW SCHEMAS FROM hive;
 -- Output: bronze, silver, gold
 
 SHOW TABLES FROM hive.gold;
 -- Output: dim_customer, dim_merchant, dim_time, dim_location, fact_transactions
+
+-- Query data (PHẢI dùng Delta catalog)
+SELECT COUNT(*) FROM delta.bronze.transactions;
+SELECT COUNT(*) FROM delta.silver.transactions;
+SELECT COUNT(*) FROM delta.gold.fact_transactions;
 
 quit;
 ```
@@ -416,33 +428,38 @@ quit;
 - **Driver**: Trino (hoặc Presto)
 - **Host**: `localhost`
 - **Port**: `8085`
-- **Database/Catalog**: `hive`
+- **Database/Catalog**: `delta` ⚠️ (KHÔNG phải `hive`)
 - **Schema**: `gold`, `silver`, hoặc `bronze`
 - **Username**: `trino` (hoặc bất kỳ)
 - **Password**: để trống
-- **JDBC URL**: `jdbc:trino://localhost:8085/hive`
+- **JDBC URL**: `jdbc:trino://localhost:8085/delta`
+
+**⚠️ QUAN TRỌNG:** Dùng catalog `delta` để query, không phải `hive`!
 
 **Ví dụ truy vấn:**
 
 ```sql
--- Xem tất cả bảng trong Gold layer
-SHOW TABLES FROM hive.gold;
+-- Xem tất cả schemas
+SHOW SCHEMAS FROM delta;
+
+-- Xem tables trong Gold layer
+SHOW TABLES FROM delta.gold;
 
 -- Query fact table
-SELECT * FROM hive.gold.fact_transactions LIMIT 10;
+SELECT * FROM delta.gold.fact_transactions LIMIT 10;
 
 -- Join với dimension tables
 SELECT
-    t.trans_num,
+    f.trans_num,
     c.first_name,
     c.last_name,
     m.merchant_name,
-    t.amt,
-    t.is_fraud
-FROM hive.gold.fact_transactions t
-JOIN hive.gold.dim_customer c ON t.customer_key = c.customer_key
-JOIN hive.gold.dim_merchant m ON t.merchant_key = m.merchant_key
-WHERE t.is_fraud = 1
+    f.amt,
+    f.is_fraud
+FROM delta.gold.fact_transactions f
+JOIN delta.gold.dim_customer c ON f.customer_key = c.customer_key
+JOIN delta.gold.dim_merchant m ON f.merchant_key = m.merchant_key
+WHERE f.is_fraud = 1
 LIMIT 20;
 ```
 
