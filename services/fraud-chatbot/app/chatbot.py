@@ -379,33 +379,145 @@ def main():
         
         # Get AI response
         with st.chat_message("assistant"):
+            # Container để hiển thị thinking process
+            thinking_container = st.empty()
+            
             with st.spinner("🤔 Đang suy nghĩ..."):
                 try:
                     agent = get_sql_agent()
                     
-                    # Thêm system instruction để AI hiểu tiếng Việt
+                    # System instruction với schema chính xác từ Trino
                     system_instruction = """
-                    Bạn là chuyên gia phân tích gian lận tài chính, hỗ trợ người dùng Việt Nam.
+                    Bạn là chuyên gia phân tích gian lận tài chính. Trả lời bằng tiếng Việt.
                     
-                    QUAN TRỌNG - THUẬT NGỮ TIẾNG VIỆT:
-                    - "bang" = "state" (tiểu bang Mỹ, có trong cột dim_location.state)
-                    - "gian lận" = "fraud" (is_fraud = 1)
-                    - "giao dịch" = "transaction"
-                    - "merchant" = "nhà bán hàng"
-                    - Database KHÔNG có thông tin "country" (quốc gia)
+                    THUẬT NGỮ TIẾNG VIỆT:
+                    - bang/tiểu bang = state
+                    - gian lận = fraud (is_fraud=1)
+                    - giao dịch = transaction
+                    - khách hàng = customer
+                    - nhà bán hàng/merchant = merchant
                     
-                    SCHEMA:
-                    - fact_transactions: Giao dịch (is_fraud, transaction_amount, merchant, ...)
-                    - dim_location: Vị trí (state, city, zip) - KHÔNG có country
-                    - dim_customer, dim_merchant, dim_time
+                    === DATABASE SCHEMA (14 tables) ===
                     
-                    Trả lời bằng tiếng Việt, rõ ràng, có số liệu cụ thể.
+                    ** FACT TABLE (Bảng chính) **
+                    fact_transactions:
+                      - transaction_key (PK)
+                      - customer_key → JOIN dim_customer
+                      - merchant → JOIN dim_merchant (by merchant name)
+                      - time_key → JOIN dim_time
+                      - is_fraud (0=sạch, 1=gian lận)
+                      - transaction_amount, transaction_category
+                      - distance_km, customer_age_at_transaction
+                      - transaction_timestamp, transaction_hour, transaction_day_of_week
+                      - is_distant_transaction, is_late_night, is_weekend_transaction
+                      
+                    ** DIMENSION TABLES **
+                    dim_customer (912 rows):
+                      - customer_key (PK)
+                      - customer_state, customer_city, customer_zip ← Dùng để lấy STATE
+                      - first_name, last_name, gender, age, job
+                      - customer_lat, customer_long
+                      
+                    dim_merchant (50,400 rows):
+                      - merchant (tên merchant - dùng JOIN với fact_transactions.merchant)
+                      - merchant_category
+                      - merchant_lat, merchant_long
+                      
+                    dim_time (702 rows):
+                      - time_key (PK)
+                      - year, month, day, hour, minute
+                      - day_of_week, is_weekend, time_period
+                      - day_name, month_name
+                      
+                    dim_location (901 rows):
+                      - state, city, zip
+                      - lat, long, city_pop
+                      
+                    ** PRE-AGGREGATED VIEWS (Đã tính sẵn - query nhanh) **
+                    state_summary (50 states):
+                      - state, total_transactions, fraud_transactions
+                      - avg_amount, avg_distance, fraud_rate
+                      → Dùng này cho câu hỏi "Top 5 bang..."
+                      
+                    daily_summary (30 days):
+                      - report_date, total_transactions, fraud_transactions
+                      - avg_transaction_amount, total_amount, fraud_amount, fraud_rate
+                      
+                    hourly_summary (702 hours):
+                      - year, month, day, hour
+                      - total_transactions, fraud_transactions, fraud_rate
+                      
+                    category_summary (14 categories):
+                      - category, total_transactions, fraud_transactions, fraud_rate
+                      
+                    merchant_analysis (100 merchants):
+                      - merchant, merchant_category
+                      - total_transactions, fraud_transactions, fraud_rate
+                      → Dùng này cho câu "Merchant nguy hiểm nhất"
+                      
+                    amount_summary (5 ranges):
+                      - amount_range, fraud_rate
+                      
+                    fraud_patterns (5 patterns):
+                      - amount_range, fraud_count, avg_fraud_amount
+                      
+                    time_period_analysis (8 periods):
+                      - time_period (morning/afternoon/...), fraud_rate
+                      
+                    latest_metrics (1 row - metrics hôm nay):
+                      - total_transactions_today, fraud_detected_today
+                      - fraud_rate_today, alert_level
+                    
+                    === CÁCH QUERY HIỆU QUẢ ===
+                    1. Câu hỏi về STATE/BANG:
+                       - NHANH: SELECT * FROM state_summary ORDER BY fraud_rate DESC LIMIT 5
+                       - CHẬM: JOIN fact_transactions với dim_customer
+                       
+                    2. Câu hỏi về MERCHANT:
+                       - NHANH: SELECT * FROM merchant_analysis ORDER BY fraud_rate DESC LIMIT 10
+                       - CHẬM: JOIN fact_transactions với dim_merchant
+                       
+                    3. Câu hỏi về THỜI GIAN:
+                       - Theo ngày: daily_summary
+                       - Theo giờ: hourly_summary
+                       - Theo time period: time_period_analysis
+                       
+                    4. Metrics tổng quan: latest_metrics
+                    
+                    QUAN TRỌNG:
+                    - Ưu tiên dùng views đã tính sẵn (nhanh hơn 10-100x)
+                    - Chỉ JOIN fact_transactions khi cần chi tiết cụ thể
+                    - Format số đẹp, dễ đọc
                     """
                     
                     full_prompt = f"{system_instruction}\n\nCâu hỏi: {prompt}"
                     
-                    # Run agent với prompt đầy đủ
-                    response = agent.invoke({"input": full_prompt})
+                    # Hiển thị thinking process trong expander
+                    with thinking_container:
+                        with st.expander("🧠 AI Thinking Process (Click để xem)", expanded=False):
+                            thinking_placeholder = st.empty()
+                    
+                    # Capture agent output
+                    import io
+                    import sys
+                    
+                    # Redirect stdout để capture verbose output
+                    old_stdout = sys.stdout
+                    sys.stdout = captured_output = io.StringIO()
+                    
+                    try:
+                        # Run agent với prompt đầy đủ
+                        response = agent.invoke({"input": full_prompt})
+                        
+                        # Get captured output
+                        thinking_text = captured_output.getvalue()
+                        
+                        # Hiển thị thinking process nếu có
+                        if thinking_text:
+                            thinking_placeholder.code(thinking_text, language="text")
+                    finally:
+                        # Restore stdout
+                        sys.stdout = old_stdout
                     
                     # Extract answer and SQL
                     answer = response.get("output", "Xin lỗi, tôi không hiểu câu hỏi.")
