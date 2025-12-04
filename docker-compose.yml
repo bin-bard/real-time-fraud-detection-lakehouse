@@ -458,6 +458,34 @@ services:
     restart: unless-stopped
     user: "0:0"
 
+  # FastAPI - Fraud Detection API
+  fraud-detection-api:
+    build:
+      context: ./services/fraud-detection-api
+      dockerfile: Dockerfile
+    image: fraud-detection-api:latest
+    container_name: fraud-detection-api
+    depends_on:
+      - mlflow
+      - minio
+    ports:
+      - "8000:8000"
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - AWS_ACCESS_KEY_ID=minio
+      - AWS_SECRET_ACCESS_KEY=minio123
+      - MLFLOW_S3_ENDPOINT_URL=http://minio:9000
+      - MODEL_NAME=fraud_detection_randomforest
+      - MODEL_STAGE=Production
+    networks:
+      - data_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
 volumes:
   postgres_data:
   minio_data:
