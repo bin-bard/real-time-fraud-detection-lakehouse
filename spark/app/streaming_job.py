@@ -39,7 +39,7 @@ schema = StructType([
     StructField("cc_num", StringType(), True),
     StructField("merchant", StringType(), True),
     StructField("category", StringType(), True),
-    StructField("amt", StringType(), True),  # Binary encoded, cần decode
+    StructField("amt", DoubleType(), True),  # Debezium sends NUMERIC as double in JSON
     StructField("first", StringType(), True),
     StructField("last", StringType(), True),
     StructField("gender", StringType(), True),
@@ -84,7 +84,12 @@ transaction_df = parsed_df \
     .withColumn("month", 
                 when(col("trans_timestamp").isNotNull(), month(col("trans_timestamp"))).otherwise(lit(None))) \
     .withColumn("day", 
-                when(col("trans_timestamp").isNotNull(), dayofmonth(col("trans_timestamp"))).otherwise(lit(None)))
+                when(col("trans_timestamp").isNotNull(), dayofmonth(col("trans_timestamp"))).otherwise(lit(None))) \
+    .withColumn("cc_num", col("cc_num").cast("long")) \
+    .withColumn("zip", col("zip").cast("int")) \
+    .withColumn("city_pop", col("city_pop").cast("long")) \
+    .withColumn("unix_time", col("unix_time").cast("long")) \
+    .withColumn("is_fraud", col("is_fraud").cast("int"))
 
 # Hàm để ghi vào Bronze layer (Raw data)
 def write_to_bronze(df, batch_id):

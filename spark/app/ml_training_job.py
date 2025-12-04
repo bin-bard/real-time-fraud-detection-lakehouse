@@ -182,11 +182,12 @@ def train_model(spark, model_name="RandomForest"):
         available_cols = df.columns
         log_step("DATA_LOAD", f"Available columns: {len(available_cols)} columns")
         
-        # Filter extreme transaction amounts (similar to Kaggle: amt >= 5 and <= 1250)
-        log_step("DATA_FILTER", "🔍 Filtering extreme transaction amounts (5 <= amt <= 1250)...")
-        df = df.filter((col("amt") >= 5) & (col("amt") <= 1250))
+        # Note: Removed amt filtering - using all valid transactions
+        # Previous filter (amt >= 5 AND <= 1250) was too restrictive
+        log_step("DATA_FILTER", "📊 Using all transactions with amt > 0...")
+        df = df.filter(col("amt") > 0)
         filtered_count = df.count()
-        log_step("DATA_FILTER", f"After filtering: {filtered_count} records (removed {initial_count - filtered_count})")
+        log_step("DATA_FILTER", f"After removing zero-amount: {filtered_count} records (removed {initial_count - filtered_count})")
         
         # Prepare label
         log_step("DATA_PREP", "Preparing label column...")

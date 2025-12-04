@@ -309,8 +309,13 @@ PostgreSQL INSERT → Debezium CDC → Kafka
    - **Input**: Đọc từ Kafka topic `postgres.public.transactions`
    - **Processing**:
      - Filter tombstone messages (Debezium delete events với `after = null`)
-     - Parse Debezium `after` field
-     - Giữ nguyên tất cả null values (raw data integrity)
+     - Parse Debezium `after` field (JSON format)
+     - **Schema Definition**: Áp dụng schema với các kiểu dữ liệu phù hợp:
+       - `amt`: **DoubleType** (Debezium gửi NUMERIC từ Postgres dưới dạng JSON double)
+       - `cc_num`, `zip`, `city_pop`, `unix_time`: StringType (cast sau)
+       - `lat`, `long`, `merch_lat`, `merch_long`: DoubleType (native support)
+     - **Type Casting**: Cast các trường StringType → numeric types
+     - Giữ nguyên null values (raw data integrity)
    - **Output**: Ghi vào bảng **Bronze** Delta Lake
      - Mode: `append` (append-only)
      - Partition: `year/month/day`
@@ -323,13 +328,16 @@ PostgreSQL INSERT → Debezium CDC → Kafka
    - **Input**: Streaming read từ Bronze Delta Lake
    - **Data Quality Checks**:
      - Drop records có `trans_num`, `cc_num`, hoặc `trans_timestamp` NULL
-     - Fill `amt = 0` nếu NULL (giao dịch không hợp lệ)
+     - **amt field validation**:
+       - Bronze đã có `amt` dạng DoubleType (từ Debezium CDC)
+       - Nếu NULL → Fill `0.0` (giao dịch không hợp lệ)
+       - Filter `amt > 0` trong ML training (loại bỏ zero-amount transactions)
      - Fill `is_fraud = 0` nếu NULL (assume normal)
-   - **Feature Engineering** (15 features):
+   - **Feature Engineering** (20+ features):
      - **Geographic**: `distance_km` (Haversine), `is_distant_transaction`
      - **Demographic**: `age`, `gender_encoded`
-     - **Time**: `hour`, `day_of_week`, `is_weekend`, `is_late_night`, cyclic encoding
-     - **Amount**: `log_amount`, `amount_bin`, risk indicators
+     - **Time**: `hour`, `day_of_week`, `is_weekend`, `is_late_night`, cyclic encoding (`hour_sin`, `hour_cos`)
+     - **Amount**: `log_amount`, `amount_bin`, `is_zero_amount`, `is_high_amount`
    - **Real-time Inference (Optional - nếu có FastAPI)**:
      - Spark gửi features đến FastAPI `/predict`
      - Lưu cả `is_fraud` (ground truth) và `fraud_prediction` (model output)
@@ -395,32 +403,42 @@ _Luồng này chạy định kỳ theo lịch, do **Airflow** kích hoạt._
 - **Chiến lược:** Tạm dừng streaming jobs → Train models → Khởi động lại streaming.
 - **Models:** Random Forest + Logistic Regression (2 models cho thesis explanation simplicity).
 
-**Tasks workflow (7 bước):**
+**Tasks workflow (4 bước - Simplified):**
 
-1. **stop_streaming_jobs**: Dừng Silver/Gold streaming để giải phóng CPU/memory
-2. **verify_stopped**: Kiểm tra jobs đã dừng hoàn toàn
-3. **check_data_availability**: Validate Silver layer có đủ dữ liệu (>1000 records)
-4. **train_models**: Huấn luyện 2 models với enhanced logging
+1. **check_data_availability**: Validate Silver layer có đủ dữ liệu để training
+2. **train_models**: Huấn luyện 2 models với enhanced logging
    - **Data Source**: Silver Delta Lake (`s3a://lakehouse/silver/transactions`)
-   - **Data Filtering**: 5 <= amt <= 1250 (loại bỏ extreme values)
+   - **Data Filtering**: `amt > 0` (loại bỏ zero-amount transactions only)
+     - _Lý do thay đổi_: Filter cũ `5 <= amt <= 1250` quá strict, loại hết data thực tế
+     - _Giải pháp_: Chỉ filter transactions có số tiền hợp lệ (> 0)
    - **Class Balancing**: Undersample majority class (1:1 ratio như Kaggle)
-   - **Features**: 25+ features (geographic, demographic, time, amount)
+   - **Features**: 20 features (geographic, demographic, time, amount)
+     - Transaction amount features: `amt`, `log_amount`, `is_zero_amount`, `is_high_amount`, `amount_bin`
+     - Geographic features: `distance_km`, `is_distant_transaction`, `lat`, `long`, `merch_lat`, `merch_long`, `city_pop`
+     - Demographic features: `age`, `gender_encoded`
+     - Time features: `hour`, `day_of_week`, `is_weekend`, `is_late_night`, `hour_sin`, `hour_cos`
+   - **Missing Value Handling**: Fill với median cho từng feature (null-safe)
+   - **Feature Scaling**: MinMax scaler (0-1 normalization)
    - **Train/Test Split**: 80/20 với seed=42
    - **Model Configs**:
-     - RandomForest: 200 trees, maxDepth=30
-     - LogisticRegression: maxIter=1000, no regularization
-   - **Metrics Tracked**: Accuracy, Precision, Recall, Specificity, F1, AUC
-   - **Logging**: [STEP: XXX] prefixes với sys.stdout.flush() cho Airflow visibility
-   - **Data Consistency**: Verify all features exist in Silver layer, warn if missing
-5. **verify_models**: Check MLflow có 2 registered models với metrics
-6. **restart_streaming_jobs**: Khởi động lại Silver/Gold streaming
-7. **send_notification**: Thông báo kết quả training (success/failure)
-
-**MLflow Integration:**
+     - RandomForest: 200 trees, maxDepth=30, minInstancesPerNode=1
+     - LogisticRegression: maxIter=1000, regParam=0.0, standardization=False
+   - **Metrics Tracked**: Accuracy, Precision, Recall, Specificity, F1, AUC, Confusion Matrix (TP/TN/FP/FN)
+     **MLflow Integration:**
 
 - **Experiment**: `fraud_detection_production`
 - **Registered Models**:
   - `fraud_detection_randomforest`
+  - `fraud_detection_logisticregression`
+- **Artifacts Storage**: S3/MinIO (`s3://lakehouse/models/`)
+- **Environment Variables** (truyền qua spark-submit):
+  - `spark.executorEnv.AWS_ACCESS_KEY_ID=minio`
+  - `spark.executorEnv.AWS_SECRET_ACCESS_KEY=minio123`
+  - `spark.executorEnv.MLFLOW_S3_ENDPOINT_URL=http://minio:9000`
+- **Tracked Parameters**: model type, train/test samples, num_features, hyperparameters
+- **Tracked Metrics**: accuracy, precision, recall, specificity, f1_score, auc, training_duration_seconds
+- **Confusion Matrix**: TP, TN, FP, FN logged as metrics
+- **Model Logging**: `mlflow.spark.log_model()` với registered_model_name
   - `fraud_detection_logisticregression`
 - **Artifacts Storage**: S3/MinIO (`s3a://mlflow/artifacts/`)
 - **Tracked Parameters**: model type, train/test samples, num_features, hyperparameters
@@ -436,12 +454,12 @@ ML training job (`ml_training_job.py`) implement `log_step(step_name, message)` 
 - Step types: INIT, DATA_LOAD, DATA_FILTER, FEATURE_PREP, CLASS_BALANCE, DATA_SPLIT, MODEL_CONFIG, TRAINING, EVALUATION, RESULTS, MLFLOW, SUCCESS, ERROR
 
 **Expected Performance (Kaggle benchmark):**
-
-- Accuracy: ~96.8%
-- AUC: ~99.5%
-- Training Duration: 10-20 phút (tùy data size)
-
 **Fault Tolerance:**
+
+- Nếu training fail → Airflow retry 1 lần (configured in DAG default_args)
+- Nếu vẫn fail → Send alert notification, giữ nguyên models cũ trong MLflow registry
+- Streaming jobs KHÔNG bị dừng (đã loại bỏ stop/restart tasks để tránh downtime)
+  **Fault Tolerance:**
 
 - Nếu training fail → Airflow retry 1 lần
 - Nếu vẫn fail → Send alert, giữ nguyên models cũ

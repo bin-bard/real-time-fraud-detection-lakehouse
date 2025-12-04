@@ -85,12 +85,26 @@ def model_retraining_pipeline():
                     '--packages', 'io.delta:delta-core_2.12:2.4.0,org.apache.hadoop:hadoop-aws:3.3.4',
                     '--conf', 'spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension',
                     '--conf', 'spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog',
+                    # Pass environment variables to Spark executors for MLflow S3 access
+                    '--conf', 'spark.executorEnv.AWS_ACCESS_KEY_ID=minio',
+                    '--conf', 'spark.executorEnv.AWS_SECRET_ACCESS_KEY=minio123',
+                    '--conf', 'spark.executorEnv.MLFLOW_S3_ENDPOINT_URL=http://minio:9000',
                     '/app/ml_training_job.py'
                 ],
                 capture_output=True,
                 text=True,
                 check=True
             )
+            
+            # Log Spark job output for debugging
+            logger.info("=" * 80)
+            logger.info("📊 Spark Job Output:")
+            logger.info("=" * 80)
+            logger.info(result.stdout)
+            if result.stderr:
+                logger.warning("⚠️ Spark Warnings/Errors:")
+                logger.warning(result.stderr)
+            logger.info("=" * 80)
             
             logger.info(f"⏰ Training completed at: {datetime.now()}")
             logger.info("✅ Model training finished successfully")
