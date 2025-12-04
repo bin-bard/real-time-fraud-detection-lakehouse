@@ -194,7 +194,7 @@ services:
       - postgres
     volumes:
       - ./deployment/debezium/setup-connector.sh:/setup.sh
-    entrypoint: ["/bin/sh", "-c", "sleep 60 && /setup.sh"]
+    entrypoint: ["/bin/sh", "-c", "sleep 15 && /setup.sh"]
     networks:
       - data_network
     restart: "no" # Chỉ chạy 1 lần
@@ -402,6 +402,9 @@ services:
       - "8081:8080"
     command: >
       bash -c "
+      curl -fsSL https://get.docker.com -o get-docker.sh &&
+      sh get-docker.sh --version 24.0 &&
+      rm get-docker.sh &&
       airflow db init &&
       airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com || true &&
       airflow webserver
@@ -433,7 +436,13 @@ services:
       - ./airflow/plugins:/opt/airflow/plugins
       - /var/run/docker.sock:/var/run/docker.sock
       - .:/workspace
-    command: scheduler
+    command: >
+      bash -c "
+      curl -fsSL https://get.docker.com -o get-docker.sh &&
+      sh get-docker.sh --version 24.0 &&
+      rm get-docker.sh &&
+      airflow scheduler
+      "
     networks:
       - data_network
     restart: unless-stopped

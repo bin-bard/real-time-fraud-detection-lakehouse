@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 echo "⏳ Waiting for Debezium Connect to be ready..."
 until curl -s http://debezium:8083/connectors > /dev/null 2>&1; do
