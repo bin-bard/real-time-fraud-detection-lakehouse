@@ -138,13 +138,38 @@ Query Layer (Trino + Metabase)
 
 ### 1. Yêu cầu hệ thống
 
-- Docker & Docker Compose
-- Python 3.9+
-- 8GB RAM, 20GB disk space
+**Phần cứng tối thiểu:**
+
+- **CPU**: 6 cores (khuyến nghị 8+ cores)
+- **RAM**: 10GB (khuyến nghị 16GB)
+- **Disk**: 30GB trống
+
+**Phần mềm:**
+
+- Docker Desktop 4.0+ (Windows/Mac) hoặc Docker Engine 20.10+ (Linux)
+- Docker Compose 2.0+
+- PowerShell 5.1+ (Windows) hoặc Bash (Linux/Mac)
+
+**Cấu hình Docker (Windows WSL2):**
+
+Tạo file `C:\Users\<YourUsername>\.wslconfig`:
+
+```ini
+[wsl2]
+memory=10GB
+processors=6
+swap=4GB
+```
+
+Sau đó restart WSL2:
+
+```powershell
+wsl --shutdown
+```
 
 ---
 
-### 2. Khởi động hệ thống
+### 2. Khởi động hệ thống lần đầu
 
 ```bash
 # Clone repository
@@ -152,91 +177,83 @@ git clone https://github.com/bin-bard/real-time-fraud-detection-lakehouse.git
 cd real-time-fraud-detection-lakehouse
 
 # Khởi động toàn bộ hệ thống
-docker-compose up -d
+docker compose up -d --build
 ```
 
-> **Lưu ý:** Tất cả services tự động start, bao gồm Bronze streaming và Silver/Gold batch jobs.
+**⏳ Thời gian khởi động:** ~5-10 phút (tải images + khởi tạo services)
+
+> **Lưu ý quan trọng:**
+>
+> - Tất cả services tự động start
+> - Bronze streaming chạy liên tục (real-time CDC)
+> - Silver/Gold jobs chạy batch mỗi 5 phút qua Airflow DAG
+> - Data producer tự động insert dữ liệu vào PostgreSQL
 
 ---
 
-### 3. Kiểm tra Data Pipeline
+### 3. Kiểm tra hệ thống đã khởi động
 
-Pipeline tự động chạy với **4 services chính**:
-
-#### Kiểm tra logs
+#### Verify tất cả containers đang chạy
 
 ```bash
-# Xem tất cả jobs
-docker-compose logs -f bronze-streaming silver-job gold-job hive-registration
-
-# Hoặc từng job riêng lẻ
-docker logs -f bronze-streaming    # Bronze: CDC → Delta Lake
-docker logs -f silver-job          # Silver: Feature engineering (every 5 min)
-docker logs -f gold-job            # Gold: Star schema (every 5 min)
-docker logs -f hive-registration   # Hive: Auto-register tables (every 1 hour)
+docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 ```
 
-#### Verify thành công
+**Output mong đợi:** 15+ containers với status `Up`
 
-**Bronze streaming** (continuous):
+#### Kiểm tra logs Pipeline
 
-```
-Writing batch 100 to Bronze layer...
-Batch 100 written to Bronze successfully.
-```
+````bash
+# Bronze streaming (real-time CDC)
+docker logs -f bronze-streaming
 
-**Silver batch** (every 5 minutes):
+# Airflow scheduler (quản lý batch jobs)
+#### Verify Pipeline hoạt động
 
-```
-🥈 Starting Bronze to Silver layer BATCH processing...
-Found 86427 new records to process
-✅ Successfully processed 86427 records to Silver layer!
-✅ Silver batch completed. Sleeping 5 minutes...
-```
-
-**Gold batch** (every 5 minutes):
-
-```
-✨ Gold layer batch processing completed!
-📊 Processed 86527 records from Silver layer
-📊 Updated tables:
-   - dim_customer -> s3a://lakehouse/gold/dim_customer
-   - dim_merchant -> s3a://lakehouse/gold/dim_merchant
-   - dim_time -> s3a://lakehouse/gold/dim_time
-   - dim_location -> s3a://lakehouse/gold/dim_location
-   - fact_transactions -> s3a://lakehouse/gold/fact_transactions
-```
-
-**Hive registration** (auto, every 1 hour):
-
-```
-🔧 Hive Metastore Registration Service
-⏳ Waiting for Gold layer to have data...
-🚀 Running Delta to Hive registration...
-✅ Registered bronze.transactions (1,296,675 records)
-✅ Registered silver.transactions (1,296,675 records)
-✅ Registered gold.dim_customer (997 records)
-✅ Registered gold.dim_merchant (693 records)
-✅ Registered gold.dim_time (17,520 records)
-✅ Registered gold.dim_location (956 records)
-✅ Registered gold.fact_transactions (1,296,675 records)
-✅ Registration completed successfully!
-♻️  Entering maintenance loop (re-register every 1 hour)...
-```
-
-#### Kiểm tra CPU usage
+**1. Bronze Layer (Real-time CDC):**
 
 ```bash
-docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}" | grep -E "bronze|silver|gold"
+docker logs bronze-streaming --tail 20
+````
+
+Log thành công:
+
+```
+25/12/04 14:10:46 INFO ProcessingTimeMicroBatchStream: Batch 5 processing started
+25/12/04 14:10:47 INFO WriteToDataSourceV2: Writing 142 records to Bronze layer...
+25/12/04 14:10:48 INFO WriteToDataSourceV2: ✅ Batch 5 written successfully
 ```
 
-**Output mong đợi:**
+**2. Airflow DAG (Batch ETL):**
 
+- Truy cập Airflow UI: http://localhost:8081 (`admin`/`admin`)
+- Check DAG `lakehouse_pipeline_taskflow` (chạy mỗi 5 phút)
+- Xem task logs để verify Silver/Gold processing
+
+**3. Data trong MinIO:**
+
+- Truy cập MinIO Console: http://localhost:9001 (`minio`/`minio123`)
+- Navigate: `lakehouse/bronze/transactions/` → verify có Parquet files
+- Navigate: `lakehouse/silver/transactions/` → verify có data (sau ~5 phút)
+- Navigate: `lakehouse/gold/` → verify có 5 folders (dim*\*, fact*\*)
+
+**4. Trino Query (verify end-to-end):**
+
+```bash
+docker exec -it trino trino
 ```
-bronze-streaming   195.96%   935.5MiB / 7.76GiB
-silver-job         0.00%     219.5MiB / 7.76GiB
+
+````sql
+-- Kiểm tra số lượng records
+SELECT COUNT(*) FROM hive.bronze.transactions;
+SELECT COUNT(*) FROM hive.silver.transactions;
+SELECT COUNT(*) FROM hive.gold.fact_transactions;
+
+-- Exit
+quit;
+```/ 7.76GiB
 gold-job           0.00%     2.555MiB / 7.76GiB
-```
+````
 
 ✅ **Bronze**: ~195% CPU (streaming liên tục)  
 ✅ **Silver**: 0% CPU (đang sleep 5 phút)  
@@ -244,106 +261,119 @@ gold-job           0.00%     2.555MiB / 7.76GiB
 
 ---
 
-### 4. Cấu trúc Spark Jobs
+### 4. Cấu trúc Spark Jobs & Data Flow
+
+#### Kiến trúc xử lý dữ liệu
+
+```
+PostgreSQL (Source DB)
+    ↓ Debezium CDC (Change Data Capture)
+Kafka Topic: postgres.public.transactions
+    ↓ Bronze Streaming Job (Continuous, ~195% CPU)
+Bronze Delta Lake (s3a://lakehouse/bronze/)
+    ↓ Silver Batch Job (Every 5 min via Airflow)
+Silver Delta Lake (40 features, s3a://lakehouse/silver/)
+    ↓ Gold Batch Job (Every 5 min via Airflow)
+Gold Delta Lake (5 tables, s3a://lakehouse/gold/)
+    ↓ Hive Metastore Registration (Auto via Airflow)
+    ↓ Trino Query Engine (hive catalog)
+Metabase Dashboard / Analytics
+```
 
 #### Bronze Layer (`streaming_job.py`)
 
-- **Mode**: Structured Streaming (continuous)
-- **Input**: Kafka topic `postgres.public.transactions`
-- **Processing**: Parse Debezium CDC format (`$.after.*`)
-- **Output**: Delta Lake `s3a://lakehouse/bronze/transactions`
-- **Partitioning**: By `year`, `month`, `day`
+**Mode:** Structured Streaming (continuous)  
+**Input:** Kafka topic `postgres.public.transactions`  
+**Processing:**
+
+- Parse Debezium CDC format (`$.after.*`)
+- Extract 22 fields từ JSON payload
+- Add metadata: `ingestion_time`, partition keys (`year`, `month`, `day`)
+
+**Output:** Delta Lake `s3a://lakehouse/bronze/transactions`  
+**Trigger:** Continuous (processAvailableNow)  
+**Checkpoint:** `s3a://lakehouse/checkpoints/kafka_to_bronze`
+
+**Container:** `bronze-streaming` (auto-start)
+
+```bash
+# Xem logs
+docker logs -f bronze-streaming
+```
 
 #### Silver Layer (`silver_job.py`)
 
-- **Mode**: Batch (every 5 minutes)
-- **Input**: Bronze Delta Lake
-- **Processing**:
-  - Data quality checks
-  - Type casting (String → Double/Long/Date)
-  - Feature engineering (40 features)
-  - Incremental processing (only new data)
-- **Output**: Delta Lake `s3a://lakehouse/silver/transactions`
-- **Config**: Ancient date support (`datetimeRebaseModeInWrite=LEGACY`)
+**Mode:** Batch (triggered by Airflow every 5 minutes)  
+**Input:** Bronze Delta Lake  
+**Processing:**
+
+- **Incremental:** Chỉ xử lý records mới (watermark-based)
+- Type casting (String → Double/Long/Date)
+- Data quality checks (fillna, outliers)
+- **Feature Engineering:** 40 features
+  - Geographic: `distance_km`, `is_distant_transaction`
+  - Demographic: `age`, `gender_encoded`
+  - Time: `hour`, `day_of_week`, `is_weekend`, `is_late_night`, `hour_sin`, `hour_cos`
+  - Amount: `log_amount`, `amount_bin`, `is_zero_amount`, `is_high_amount`
+
+**Output:** Delta Lake `s3a://lakehouse/silver/transactions`  
+**Partitioning:** By `year`, `month`, `day`  
+**Schema Evolution:** `overwriteSchema=true` (support ancient dates với LEGACY mode)
+
+**Trigger:** Airflow DAG `lakehouse_pipeline_taskflow` task `run_silver_transformation`
+
+```bash
+# Xem logs trong Airflow UI
+http://localhost:8081 → lakehouse_pipeline_taskflow → run_silver_transformation → Logs
+```
 
 #### Gold Layer (`gold_job.py`)
 
-- **Mode**: Batch (every 5 minutes)
-- **Input**: Silver Delta Lake
-- **Processing**:
-  - Star schema transformation
-  - Hash-based surrogate keys
-  - Incremental processing
-- **Output**: 5 Delta tables
-  - `dim_customer`: Customer dimension (cc_num, first, last, gender, dob, etc.)
-  - `dim_merchant`: Merchant dimension (merchant, category, merch_lat, merch_long)
-  - `dim_time`: Time dimension (date, hour, day_of_week, is_weekend)
-  - `dim_location`: Location dimension (city, state, zip, lat, long)
-  - `fact_transactions`: Fact table (foreign keys + measures)
-  - `dim_merchant` - Dimension table (cửa hàng)
-  - `dim_time` - Dimension table (thời gian)
-  - `dim_location` - Dimension table (địa điểm)
-  - `fact_transactions` - Fact table (giao dịch với metrics)
-- Checkpoint được lưu tại `s3a://lakehouse/checkpoints/silver_to_gold/*`
-- Trigger mỗi 30 giây để xử lý micro-batch
-- **Không tắt terminal này** - để job chạy liên tục
+**Mode:** Batch (triggered by Airflow every 5 minutes)  
+**Input:** Silver Delta Lake  
+**Processing:**
 
----
+- **Star Schema transformation**
+- Hash-based surrogate keys (MD5)
+- **Incremental:** Chỉ xử lý records mới từ Silver
 
-**Luồng xử lý hoàn chỉnh (End-to-End):**
+**Output:** 5 Delta tables
 
-```
-PostgreSQL INSERT → Debezium CDC → Kafka
-  ↓ (Bronze Streaming - Auto)
-Bronze Layer (Delta Lake)
-  ↓ (Silver Streaming - 30s trigger)
-Silver Layer + Feature Engineering (15 features)
-  ↓ (Gold Streaming - 30s trigger)
-Gold Layer (Star Schema: 4 Dims + 1 Fact)
+1. **`dim_customer`** - Customer dimension
+   - `customer_key` (PK), `cc_num`, `first`, `last`, `gender`, `dob`, `job`
+2. **`dim_merchant`** - Merchant dimension
+   - `merchant_key` (PK), `merchant`, `category`, `merch_lat`, `merch_long`
+3. **`dim_time`** - Time dimension
+   - `time_key` (PK), `trans_date`, `hour`, `day_of_week`, `is_weekend`, `is_late_night`
+4. **`dim_location`** - Location dimension
+   - `location_key` (PK), `city`, `state`, `zip`, `lat`, `long`, `city_pop`
+5. **`fact_transactions`** - Fact table
+   - Foreign keys: `customer_key`, `merchant_key`, `time_key`, `location_key`
+   - Measures: `amt`, `distance_km`, `age`, `is_fraud`
+   - Degenerate dimensions: `trans_num`, `trans_timestamp`
+
+**Trigger:** Airflow DAG `lakehouse_pipeline_taskflow` task `run_gold_transformation`
+
+```bash
+# Xem logs trong Airflow UI
+http://localhost:8081 → lakehouse_pipeline_taskflow → run_gold_transformation → Logs
 ```
 
-**Ưu điểm kiến trúc streaming:**
+#### Hive Metastore Registration
 
-- ✅ **Near Real-time**: Độ trễ ~30-60 giây từ INSERT đến Gold
-- ✅ **Tự động**: Không cần trigger thủ công
-- ✅ **Scalable**: Xử lý được millions records/day
-- ✅ **Fault-tolerant**: Checkpoint đảm bảo exactly-once processing
-
----
-
-### 5. Query Data với Trino
-
-Trino có thể query trực tiếp Delta Lake tables **không cần Hive Metastore**:
+**Mode:** Auto-registration via Airflow  
+**Trigger:** Sau khi Gold job hoàn thành  
+**Tables registered:** 7 tables (Bronze, Silver, Gold)
 
 ```sql
--- Truy cập Trino CLI
+-- Verify trong Trino
 docker exec -it trino trino
 
--- List catalogs
-SHOW CATALOGS;
+SHOW SCHEMAS FROM hive;
+-- Output: bronze, silver, gold
 
--- Query Bronze layer
-SELECT COUNT(*) FROM delta.default."s3a://lakehouse/bronze/transactions";
-
--- Query Silver layer (với features)
-SELECT trans_num, amt, distance_km, age, is_fraud
-FROM delta.default."s3a://lakehouse/silver/transactions"
-LIMIT 10;
-
--- Query Gold layer - Star Schema
-SELECT
-  f.transaction_amount,
-  c.first_name || ' ' || c.last_name AS customer_name,
-  m.merchant_name,
-  t.hour,
-  l.state
-FROM delta.default."s3a://lakehouse/gold/fact_transactions" f
-JOIN delta.default."s3a://lakehouse/gold/dim_customer" c ON f.customer_key = c.customer_key
-JOIN delta.default."s3a://lakehouse/gold/dim_merchant" m ON f.merchant_key = m.merchant_key
-JOIN delta.default."s3a://lakehouse/gold/dim_time" t ON f.time_key = t.time_key
-JOIN delta.default."s3a://lakehouse/gold/dim_location" l ON f.location_key = l.location_key
-WHERE f.is_fraud = 1
-LIMIT 20;
+SHOW TABLES FROM hive.gold;
+-- Output: dim_customer, dim_merchant, dim_time, dim_location, fact_transactions
 ```
 
 ---
@@ -434,71 +464,122 @@ Hệ thống sử dụng **Apache Airflow 2.8.0** để quản lý các workflow
   1. `check_bronze_data` - Kiểm tra Bronze streaming đang chạy
   2. `run_silver_transformation` - Chạy Silver job (Bronze → Features)
   3. `run_gold_transformation` - Chạy Gold job (Silver → Star Schema)
-  4. `register_tables_to_hive` - Đăng ký Delta tables vào Hive Metastore
-  5. `verify_trino_access` - Verify Trino có thể query tables
-  6. `send_pipeline_summary` - Tổng kết kết quả
 
-**2. `model_retraining_taskflow`** - Automated ML Model Retraining (TaskFlow API)
+### 5. Airflow Workflow Orchestration
 
-- **Schedule**: Hàng ngày lúc 02:00 (`0 2 * * *`)
+Hệ thống sử dụng **Apache Airflow 2.8.0** để quản lý batch ETL và ML training:
+
+#### Truy cập Airflow UI
+
+**URL:** http://localhost:8081  
+**Credentials:** `admin` / `admin`
+
+#### DAGs có sẵn
+
+**1. `lakehouse_pipeline_taskflow`** - Batch ETL Pipeline
+
+- **Schedule**: Mỗi 5 phút (`*/5 * * * *`)
+- **Mục đích**: Transform Bronze → Silver → Gold
 - **Tasks**:
-  1. `stop_streaming_jobs` - Dừng Silver/Gold streaming để giải phóng CPU
-  2. `verify_jobs_stopped` - Kiểm tra jobs đã dừng hoàn toàn
-  3. `check_data_availability` - Validate Silver layer có đủ dữ liệu
-  4. `train_ml_models` - Huấn luyện RandomForest + LogisticRegression
-  5. `verify_models_registered` - Check MLflow có 2 registered models
-  6. `restart_streaming_jobs` - Khởi động lại Silver/Gold streaming
-  7. `send_notification` - Thông báo kết quả training
+  1. ✅ `check_bronze_data` - Verify Bronze có data mới
+  2. 🔄 `run_silver_transformation` - Feature engineering (40 features)
+  3. ⭐ `run_gold_transformation` - Star schema (5 tables)
+  4. 📋 `register_tables_to_hive` - Register vào Hive Metastore
+  5. ✔️ `verify_trino_access` - Test Trino query
+  6. 📊 `send_pipeline_summary` - Log summary
 
-#### Trigger DAG thủ công
-
-```bash
-# Qua Airflow UI
-# 1. Truy cập http://localhost:8081
-# 2. Click vào DAG name
-# 3. Click nút "Trigger DAG" (play button)
-
-# Hoặc qua CLI
-docker exec airflow-scheduler airflow dags trigger lakehouse_pipeline_taskflow
-docker exec airflow-scheduler airflow dags trigger model_retraining_taskflow
-```
-
-#### Xem logs của task
+**Xem logs:**
 
 ```bash
-# Qua UI: DAG → Run → Task → Logs
+# Trong Airflow UI
+DAGs → lakehouse_pipeline_taskflow → Graph → Click task → Logs
 
-# Hoặc qua CLI
-docker exec airflow-scheduler airflow tasks logs lakehouse_pipeline_taskflow run_silver_transformation <execution_date>
+# Hoặc check summary trong logs
+docker logs airflow-scheduler | grep "LAKEHOUSE PIPELINE"
 ```
 
-**Lợi ích TaskFlow API:**
+**Output mẫu:**
 
-- Code gọn gàng, dễ đọc hơn Operator-based
-- Tự động handle XCom giữa các tasks
-- Type hints support
-- Retry tự động khi fail
-- Log chi tiết từng bước
+```
+[2025-12-04, 21:16:50] INFO - ============================================================
+[2025-12-04, 21:16:50] INFO - Bronze Check: ready
+[2025-12-04, 21:16:50] INFO - Silver Status: success
+[2025-12-04, 21:16:50] INFO -   - Records Processed: 8,547
+[2025-12-04, 21:16:50] INFO - Gold Status: success
+[2025-12-04, 21:16:50] INFO -   - Tables Created: 5
+[2025-12-04, 21:16:50] INFO - Hive Registration: success
+[2025-12-04, 21:16:50] INFO -   - Tables Registered: 7
+[2025-12-04, 21:16:50] INFO - Trino Verification: verified
+[2025-12-04, 21:16:50] INFO - ============================================================
+```
 
 ---
 
-### 5. Kiểm tra Pipeline
+**2. `model_retraining_taskflow`** - ML Model Training
 
-**Check Bronze layer data:**
+- **Schedule**: Hàng ngày lúc 02:00 AM (`0 2 * * *`)
+- **Mục đích**: Train RandomForest + LogisticRegression models
+- **Tasks**:
+  1. 📊 `check_data_availability` - Verify Silver layer có data
+  2. 🧠 `train_ml_models` - Train 2 models với MLflow tracking
+  3. ✅ `verify_models_registered` - Check MLflow registry
+  4. 📬 `send_notification` - Training summary
 
-```bash
-# MinIO console: http://localhost:9001
-# Navigate to: lakehouse/bronze/transactions/
+**⚠️ Quan trọng - Resource Management:**
+
+ML training tiêu tốn nhiều CPU/RAM. **Trước khi chạy**, giải phóng tài nguyên:
+
+```powershell
+# Tắt services không cần thiết (giải phóng ~2GB RAM + 1-2 CPU cores)
+.\scripts\prepare-ml-training.ps1
+
+# Sau đó trigger DAG qua Airflow UI hoặc:
+# Airflow UI → model_retraining_taskflow → Trigger DAG (▶️)
+
+# Sau khi training xong, khôi phục services
+.\scripts\restore-services.ps1
 ```
 
-**Check Kafka messages:**
+**Services bị tắt khi training:**
+
+- ❌ Trino (query engine - không cần cho training)
+- ❌ Metabase (dashboard - không cần cho training)
+- ❌ Hive Metastore (catalog - training dùng Delta trực tiếp)
+- ❌ Debezium (CDC connector - tạm dừng data ingestion)
+- ❌ Data Producer (data generator - tạm dừng)
+
+**Services vẫn chạy:**
+
+- ✅ Spark (master + worker) - Chạy training job
+- ✅ MLflow - Track experiments và lưu models
+- ✅ MinIO - Storage cho Delta Lake + artifacts
+- ✅ PostgreSQL - Airflow DB + MLflow backend
+- ✅ Airflow - Orchestration
+
+**Spark config tối ưu cho training:**
+
+```python
+'--conf', 'spark.cores.max=2',           # Giảm từ 4→2 cores
+'--conf', 'spark.executor.cores=1',      # 1 core/executor
+'--conf', 'spark.executor.memory=1g',    # Giảm từ 2g→1g
+'--conf', 'spark.driver.memory=1g',      # Giảm từ 2g→1g
+```
+
+**Xem training logs:**
 
 ```bash
-docker exec -it kafka kafka-console-consumer \
-  --bootstrap-server localhost:9092 \
-  --topic postgres.public.transactions \
-  --from-beginning --max-messages 5
+# Trong Airflow UI
+DAGs → model_retraining_taskflow → Graph → train_ml_models → Logs
+
+# Hoặc check Spark job output
+docker logs spark-master | grep "FraudDetectionMLTraining"
 ```
+
+**Verify models trong MLflow:**
+
+- Truy cập MLflow UI: http://localhost:5000
+- Check experiment `fraud_detection_production`
+- Verify có 2 registered models: `fraud_detection_random_forest`, `fraud_detection_logistic_regression`
 
 ### Xác minh CDC (INSERT/UPDATE/DELETE) và giá trị trường `amt`
 
@@ -584,60 +665,147 @@ docker exec trino trino --server localhost:8081 --execute "SHOW TABLES FROM delt
 
 #### Sample Queries
 
-```sql
+````sql
 -- Fraud rate by merchant category
 SELECT
   dm.category,
   COUNT(*) as total_transactions,
   SUM(CASE WHEN ft.is_fraud = true THEN 1 ELSE 0 END) as fraud_count,
-  ROUND(100.0 * SUM(CASE WHEN ft.is_fraud = true THEN 1 ELSE 0 END) / COUNT(*), 2) as fraud_rate
-FROM delta.gold.fact_transactions ft
-JOIN delta.gold.dim_merchant dm ON ft.merchant_key = dm.merchant_key
-GROUP BY dm.category
-ORDER BY fraud_rate DESC;
-
--- Geographic fraud distribution
-SELECT
-  dl.state,
-  COUNT(*) as total_transactions,
-  SUM(CASE WHEN ft.is_fraud = true THEN 1 ELSE 0 END) as fraud_count
-FROM delta.gold.fact_transactions ft
-JOIN delta.gold.dim_location dl ON ft.location_key = dl.location_key
-GROUP BY dl.state
-ORDER BY fraud_count DESC
-LIMIT 10;
-```
-
-**📖 Chi tiết:**
-
-- **Setup guide:** [`docs/METABASE_SETUP.md`](docs/METABASE_SETUP.md) - Connection settings & 7 sample queries
-- **Troubleshooting:** [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) - Giải quyết các vấn đề thường gặp
-
----
-
-### 8. Troubleshooting & Maintenance
+### 6. Troubleshooting & Maintenance
 
 #### Reset toàn bộ hệ thống
 
+**Cảnh báo:** Xóa toàn bộ data và volumes!
+
 ```bash
-docker-compose down -v
-docker-compose up -d --build
+docker compose down -v
+docker compose up -d --build
+````
+
+#### Xóa chỉ data lakehouse (giữ lại containers)
+
+```bash
+# Stop data ingestion
+docker compose stop data-producer bronze-streaming
+
+# Xóa Delta Lake data (PowerShell)
+docker exec minio mc rm -r --force lakehouse/bronze/ lakehouse/silver/ lakehouse/gold/ lakehouse/checkpoints/
+
+# Restart pipeline
+docker compose up -d bronze-streaming data-producer
 ```
 
 #### Check logs khi có lỗi
 
 ```bash
-# Check Bronze streaming
+# Airflow scheduler (quản lý DAGs)
+docker logs airflow-scheduler --tail 100
+
+# Bronze streaming (CDC ingestion)
+docker logs bronze-streaming --tail 50
+
+# Spark Master (job allocation)
+docker logs spark-master --tail 50
+
+# MLflow (model tracking)
+docker logs mlflow --tail 50
+```
+
+#### Common Issues
+
+**1. Airflow task timeout (SIGTERM)**
+
+**Nguyên nhân:** Spark job chiếm quá nhiều CPU → Airflow DB connection timeout
+
+**Giải pháp:**
+
+```powershell
+# Giải phóng tài nguyên trước khi chạy ML training
+.\scripts\prepare-ml-training.ps1
+```
+
+**2. High CPU usage (>500%)**
+
+**Kiểm tra:**
+
+```bash
+docker stats --no-stream
+```
+
+**Bình thường:**
+
+- `bronze-streaming`: ~195% CPU (continuous)
+- `spark-master`: ~50-100% CPU khi có job
+- `airflow-*`: ~10-30% CPU
+
+**Bất thường:** Nếu tổng CPU >600%, restart services:
+
+```bash
+docker compose restart bronze-streaming spark-master spark-worker
+```
+
+**3. No data in Silver/Gold**
+
+**Debug:**
+
+```bash
+# 1. Check Bronze có data không
+docker exec -it trino trino --execute "SELECT COUNT(*) FROM hive.bronze.transactions"
+
+# 2. Check Airflow DAG lakehouse_pipeline_taskflow có chạy không
+# → Airflow UI: http://localhost:8081
+
+# 3. Check logs của Silver transformation
+# → Airflow UI → lakehouse_pipeline_taskflow → run_silver_transformation → Logs
+```
+
+**4. MLflow empty (no models)**
+
+**Nguyên nhân:** Training job chưa chạy hoặc fail do insufficient data
+
+**Giải pháp:**
+
+```bash
+# 1. Verify Silver có data (cần ít nhất 1000 records)
+docker exec -it trino trino --execute "SELECT COUNT(*) FROM hive.silver.transactions WHERE amt > 0"
+
+# 2. Trigger training DAG manually
+# Airflow UI → model_retraining_taskflow → Trigger DAG
+
+# 3. Check training logs
+# Airflow UI → model_retraining_taskflow → train_ml_models → Logs
+```
+
+**5. Debezium amt field = NULL (Base64 encoding)**
+
+**Nguyên nhân:** Debezium mặc định encode NUMERIC/DECIMAL as Base64
+
+**Giải pháp:** Connector đã fix với `decimal.handling.mode=double` trong `deployment/debezium/setup-connector.sh`
+
+**Verify fix:**
+
+```bash
+# Check Kafka message format
+docker exec kafka kafka-console-consumer --bootstrap-server localhost:9092 --topic postgres.public.transactions --max-messages 1
+```
+
+**Output đúng:** `"amt": 23.45` (plain double, không phải `"amt": "AfE="`)
+
+**📖 Chi tiết:** Xem [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) cho 15+ issues khác
 docker logs bronze-streaming --tail 50
 
 # Check Silver batch
+
 docker logs silver-job --tail 50
 
 # Check Gold batch
+
 docker logs gold-job --tail 50
 
 # Check Spark Master
+
 docker logs spark-master
+
 ```
 
 #### Common issues
@@ -659,22 +827,24 @@ docker logs spark-master
 ### 8. Lakehouse Structure
 
 ```
+
 s3a://lakehouse/
-├── bronze/transactions/          # Raw CDC data (Debezium format parsed)
-│   └── _delta_log/              # Delta Lake transaction logs
-├── silver/transactions/          # 40 engineered features
-│   └── _delta_log/
-├── gold/                         # Star Schema (5 tables)
-│   ├── dim_customer/
-│   ├── dim_merchant/
-│   ├── dim_time/
-│   ├── dim_location/
-│   └── fact_transactions/
-├── checkpoints/                  # Spark streaming checkpoints
-│   ├── kafka_to_bronze/         # Bronze streaming state
-│   ├── bronze_to_silver_batch/  # Silver batch watermark
-│   └── silver_to_gold_batch/    # Gold batch watermark
-└── models/                       # ML models & artifacts (future)
+├── bronze/transactions/ # Raw CDC data (Debezium format parsed)
+│ └── \_delta_log/ # Delta Lake transaction logs
+├── silver/transactions/ # 40 engineered features
+│ └── \_delta_log/
+├── gold/ # Star Schema (5 tables)
+│ ├── dim_customer/
+│ ├── dim_merchant/
+│ ├── dim_time/
+│ ├── dim_location/
+│ └── fact_transactions/
+├── checkpoints/ # Spark streaming checkpoints
+│ ├── kafka_to_bronze/ # Bronze streaming state
+│ ├── bronze_to_silver_batch/ # Silver batch watermark
+│ └── silver_to_gold_batch/ # Gold batch watermark
+└── models/ # ML models & artifacts (future)
+
 ```
 
 ---
@@ -684,18 +854,20 @@ s3a://lakehouse/
 **Luồng xử lý hoàn chỉnh:**
 
 ```
+
 PostgreSQL INSERT
-    ↓ Debezium CDC (Change Data Capture)
+↓ Debezium CDC (Change Data Capture)
 Kafka Topic: postgres.public.transactions
-    ↓ Bronze Streaming (Continuous, ~195% CPU)
+↓ Bronze Streaming (Continuous, ~195% CPU)
 Bronze Delta Lake (s3a://lakehouse/bronze/)
-    ↓ Silver Batch (Every 5 minutes, spike to ~100% CPU then sleep)
+↓ Silver Batch (Every 5 minutes, spike to ~100% CPU then sleep)
 Silver Delta Lake (40 features, s3a://lakehouse/silver/)
-    ↓ Gold Batch (Every 5 minutes, spike to ~100% CPU then sleep)
+↓ Gold Batch (Every 5 minutes, spike to ~100% CPU then sleep)
 Gold Delta Lake (5 tables, s3a://lakehouse/gold/)
-    ↓ Hive Metastore (Auto-registration every 1 hour)
-    ↓ Trino Query Engine (Delta Catalog via Hive Metastore)
+↓ Hive Metastore (Auto-registration every 1 hour)
+↓ Trino Query Engine (Delta Catalog via Hive Metastore)
 Metabase Dashboard / Analytics
+
 ```
 
 **Latency:**
@@ -732,16 +904,16 @@ Metabase Dashboard / Analytics
 
 ### 11. Key Features & Achievements
 
-✅ **Hybrid Architecture**: Streaming (Bronze) + Batch (Silver/Gold) for optimal CPU usage  
-✅ **Real-time CDC**: Debezium captures INSERT/UPDATE/DELETE from PostgreSQL  
-✅ **ACID Transactions**: Delta Lake ensures data consistency  
-✅ **Incremental Processing**: Only process new data (watermark-based)  
-✅ **Schema Evolution**: Support for ancient dates with LEGACY mode  
-✅ **40 Features**: Geographic, demographic, time-based, amount-based  
-✅ **Star Schema**: 4 dimensions + 1 fact table for analytics  
-✅ **Trino Query Engine**: Distributed SQL with Hive Metastore integration  
- **Auto Registration**: Tables auto-register to Metastore every hour  
- **Metabase Ready**: Pre-configured for BI dashboards and visualizations  
+✅ **Hybrid Architecture**: Streaming (Bronze) + Batch (Silver/Gold) for optimal CPU usage
+✅ **Real-time CDC**: Debezium captures INSERT/UPDATE/DELETE from PostgreSQL
+✅ **ACID Transactions**: Delta Lake ensures data consistency
+✅ **Incremental Processing**: Only process new data (watermark-based)
+✅ **Schema Evolution**: Support for ancient dates with LEGACY mode
+✅ **40 Features**: Geographic, demographic, time-based, amount-based
+✅ **Star Schema**: 4 dimensions + 1 fact table for analytics
+✅ **Trino Query Engine**: Distributed SQL with Hive Metastore integration
+ **Auto Registration**: Tables auto-register to Metastore every hour
+ **Metabase Ready**: Pre-configured for BI dashboards and visualizations
 ✅ **60% CPU Reduction**: From 300%+ to ~195% by moving to batch processing
 
 ---
@@ -760,3 +932,4 @@ Xem file `docs/PROJECT_SPECIFICATION.md` để hiểu rõ:
 - **[METABASE_SETUP.md](docs/METABASE_SETUP.md)** - Complete Metabase setup guide with 7 sample fraud detection queries
 - **[TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** - Detailed solutions for 6 major issues encountered during setup
 - **[PROJECT_SPECIFICATION.md](docs/PROJECT_SPECIFICATION.md)** - Full architecture specifications and requirements
+```
