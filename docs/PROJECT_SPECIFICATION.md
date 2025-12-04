@@ -1,599 +1,893 @@
-# ĐẶC TẢ YÊU CẦU DỰ ÁN (PROJECT SPECIFICATION)
+# ĐẶC TẢ KỸ THUẬT DỰ ÁN (PROJECT SPECIFICATION)
 
-**Tên đề tài:** Xây dựng hệ thống Data Lakehouse để phát hiện và xác minh gian lận tài chính trong thời gian thực.
+**Tên đề tài:** Xây dựng hệ thống Data Lakehouse phát hiện gian lận tài chính theo thời gian thực
+
 **Nhóm thực hiện:** Nhóm 6
+
 **Thành viên:**
 
 1. Nguyễn Thanh Tài - 22133049
 2. Võ Triệu Phúc - 22133043
-   **GVHD:** ThS. Phan Thị Thể
-   **Phiên bản:** 5.0
+
+**GVHD:** ThS. Phan Thị Thể
+
+**Phiên bản:** 6.0 - Final Implementation
 
 ---
 
-## 1. TỔNG QUAN DỰ ÁN (PROJECT OVERVIEW)
+## 1. TỔNG QUAN DỰ ÁN
 
-### 1.1. Mục tiêu cốt lõi
+### 1.1. Mục tiêu
 
-Dự án xây dựng một **Modern Data Platform (Nền tảng dữ liệu hiện đại)** giải quyết bài toán phát hiện gian lận thẻ tín dụng với các đặc điểm:
+Xây dựng **Modern Data Platform** giải quyết bài toán phát hiện gian lận thẻ tín dụng với các tính năng:
 
-1. **Real-time Processing:** Xử lý luồng giao dịch liên tục, phát hiện gian lận ngay khi sự kiện xảy ra.
-2. **Lakehouse Architecture:** Sử dụng Delta Lake để đảm bảo tính toàn vẹn (ACID) và truy vết lịch sử (Time Travel).
-3. **Real-time Inference:** Tích hợp mô hình AI qua API độc lập để chấm điểm gian lận tức thời.
-4. **Interactive Verification:** Cung cấp Chatbot và Dashboard giúp chuyên viên điều tra truy vấn dữ liệu theo ngôn ngữ tự nhiên.
+1. **Real-time CDC**: Capture thay đổi từ PostgreSQL qua Debezium → Kafka
+2. **Lakehouse Architecture**: Delta Lake với ACID transactions + Time Travel
+3. **Hybrid Processing**: Streaming (Bronze) + Batch (Silver/Gold)
+4. **ML Training**: Automated model retraining qua Airflow
+5. **Interactive Analytics**: Trino query engine + Metabase dashboard
 
 ### 1.2. Phạm vi dữ liệu
 
-Hệ thống xử lý luồng dữ liệu giả lập từ 01/01/2019 đến 31/12/2020. Dữ liệu được "phát lại" (replayed) để mô phỏng môi trường thời gian thực.
+- **Dataset**: Sparkov Credit Card Transactions (Kaggle)
+- **Thời gian**: 01/2019 - 12/2020 (1.8M transactions)
+- **Fraud rate**: 0.5-1% (real-world imbalance)
+- **Streaming mode**: Mô phỏng real-time với checkpoint recovery
 
 ---
 
-## 2. DỮ LIỆU SỬ DỤNG (DATASET)
+## 2. KIẾN TRÚC HỆ THỐNG
 
-**Tên bộ dữ liệu:** Credit Card Transactions Fraud Detection Dataset (Sparkov Data Generation).
-**Nguồn:** [Kaggle - Kartik Shenoy](https://www.kaggle.com/datasets/kartik2112/fraud-detection)
-
-### Schema chi tiết (Dữ liệu đầu vào):
-
-_Lưu ý: Dữ liệu CSV gốc có thể có cột index (số thứ tự) không tên ở đầu, hệ thống sẽ bỏ qua cột này._
-
-| STT | Tên cột                 | Kiểu dữ liệu | Ý nghĩa nghiệp vụ                               |
-| :-- | :---------------------- | :----------- | :---------------------------------------------- |
-| 1   | `trans_date_trans_time` | DateTime     | Thời gian giao dịch.                            |
-| 2   | `cc_num`                | Long         | Số thẻ tín dụng (ID khách hàng).                |
-| 3   | `merchant`              | String       | Tên đơn vị bán hàng (VD: fraud_Rippin).         |
-| 4   | `category`              | String       | Danh mục (VD: grocery_pos).                     |
-| 5   | `amt`                   | Double       | Số tiền giao dịch.                              |
-| 6   | `first`                 | String       | Tên đệm.                                        |
-| 7   | `last`                  | String       | Họ.                                             |
-| 8   | `gender`                | String       | Giới tính (M/F).                                |
-| 9   | `street`                | String       | Địa chỉ đường.                                  |
-| 10  | `city`                  | String       | Thành phố.                                      |
-| 11  | `state`                 | String       | Bang.                                           |
-| 12  | `zip`                   | Integer      | Mã bưu chính.                                   |
-| 13  | `lat`                   | Double       | **Vị trí chủ thẻ (Latitude) - Quan trọng.**     |
-| 14  | `long`                  | Double       | **Vị trí chủ thẻ (Longitude) - Quan trọng.**    |
-| 15  | `city_pop`              | Integer      | Dân số thành phố.                               |
-| 16  | `job`                   | String       | Nghề nghiệp.                                    |
-| 17  | `dob`                   | Date         | Ngày sinh (Dùng tính tuổi).                     |
-| 18  | `trans_num`             | String       | Mã giao dịch.                                   |
-| 19  | `unix_time`             | Long         | Thời gian dạng Unix Timestamp (VD: 1325376018). |
-| 20  | `merch_lat`             | Double       | **Vị trí cửa hàng (Latitude) - Quan trọng.**    |
-| 21  | `merch_long`            | Double       | **Vị trí cửa hàng (Longitude) - Quan trọng.**   |
-| 22  | `is_fraud`              | Integer      | Nhãn thực tế (0: Sạch, 1: Gian lận).            |
-
----
-
-## 3. KIẾN TRÚC HỆ THỐNG (SYSTEM ARCHITECTURE)
-
-Hệ thống được chia thành các tầng (Layers) rõ ràng theo mô hình Lakehouse:
-
-### 3.1. Layer 1: Ingestion (Thu thập)
-
-- **PostgreSQL:** Đóng vai trò là Database nguồn (OLTP).
-- **Debezium:** Công cụ CDC bắt các thay đổi `INSERT` từ Postgres và đẩy vào Kafka.
-- **Apache Kafka:** Hàng đợi thông điệp trung gian.
-
-### 3.2. Layer 2: Storage (Lưu trữ - Lakehouse)
-
-- **MinIO:** Object Storage (S3 Compatible).
-- **Delta Lake:** Định dạng lưu trữ bảng (Bronze, Silver, Gold).
-- **Hive Metastore:** Quản lý metadata trung tâm.
-
-### 3.3. Layer 3: Processing (Xử lý Stream)
-
-- **Apache Spark (Structured Streaming):** Engine xử lý chính, chạy liên tục 24/7 với **kiến trúc streaming 3 tầng**:
-  - **Bronze Streaming**: Kafka → Bronze Delta Lake (auto-started)
-  - **Silver Streaming**: Bronze → Silver Delta Lake (trigger mỗi 30s)
-  - **Gold Streaming**: Silver → Gold Delta Lake (trigger mỗi 30s)
-
-**Kiến trúc Streaming Pipeline:**
+### 2.1. Tổng quan Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│ Layer 1: Bronze (Raw CDC)                                    │
-│ ─────────────────────────────────────────────────────────── │
-│ Input:  Kafka CDC events                                     │
-│ Logic:  Filter tombstones, parse Debezium format            │
+┌──────────────────────────────────────────────────────────────┐
+│ Layer 1: Data Ingestion (CDC Pipeline)                      │
+├──────────────────────────────────────────────────────────────┤
+│ PostgreSQL 14 (Source DB - OLTP)                             │
+│     ↓ Debezium 2.5 (CDC Connector)                           │
+│ Apache Kafka (Message Broker)                                │
+│     ↓ Topic: postgres.public.transactions                    │
+└──────────────────────────────────────────────────────────────┘
+                            ↓
+┌──────────────────────────────────────────────────────────────┐
+│ Layer 2: Bronze - Raw Data Lake (Streaming)                 │
+├──────────────────────────────────────────────────────────────┤
+│ Spark Structured Streaming (Continuous)                      │
+│ Input: Kafka CDC events                                      │
+│ Processing: Parse Debezium format, filter tombstones         │
 │ Output: s3a://lakehouse/bronze/transactions                  │
-│ Mode:   Continuous streaming (append-only)                   │
-│ Checkpoint: s3a://lakehouse/checkpoints/kafka_to_bronze      │
-└─────────────────────────────────────────────────────────────┘
-                            ↓ (streaming read)
-┌─────────────────────────────────────────────────────────────┐
-│ Layer 2: Silver (Curated Data + Features)                   │
-│ ─────────────────────────────────────────────────────────── │
-│ Input:  Bronze Delta Lake (streaming)                        │
-│ Logic:  Data quality checks + 15 feature engineering        │
+│ Format: Delta Lake (ACID + Time Travel)                      │
+│ Storage: MinIO (S3-compatible object storage)                │
+└──────────────────────────────────────────────────────────────┘
+                            ↓
+┌──────────────────────────────────────────────────────────────┐
+│ Layer 3: Silver - Curated Data (Batch ETL)                  │
+├──────────────────────────────────────────────────────────────┤
+│ Spark Batch Job (Airflow - Every 5 minutes)                 │
+│ Input: Bronze Delta Lake (incremental read)                 │
+│ Processing:                                                  │
+│   - Data quality checks (drop nulls, fill missing)          │
+│   - Feature engineering (40 features)                        │
+│     * Geographic: distance_km, is_distant_transaction        │
+│     * Demographic: age, gender_encoded                       │
+│     * Time: hour, day_of_week, is_weekend, cyclic encoding   │
+│     * Amount: log_amount, amount_bin, is_zero_amount         │
 │ Output: s3a://lakehouse/silver/transactions                  │
-│ Mode:   Micro-batch streaming (trigger: 30 seconds)         │
-│ Checkpoint: s3a://lakehouse/checkpoints/bronze_to_silver    │
-└─────────────────────────────────────────────────────────────┘
-                            ↓ (streaming read)
-┌─────────────────────────────────────────────────────────────┐
-│ Layer 3: Gold (Dimensional Model - Star Schema)             │
-│ ─────────────────────────────────────────────────────────── │
-│ Input:  Silver Delta Lake (streaming)                        │
-│ Logic:  Create 4 Dimensions + 1 Fact table                  │
-│ Output: s3a://lakehouse/gold/{dim_*,fact_*}                 │
-│ Mode:   Micro-batch streaming (trigger: 30 seconds)         │
-│ Checkpoint: s3a://lakehouse/checkpoints/silver_to_gold/*    │
-└─────────────────────────────────────────────────────────────┘
+└──────────────────────────────────────────────────────────────┘
+                            ↓
+┌──────────────────────────────────────────────────────────────┐
+│ Layer 4: Gold - Star Schema (Batch ETL)                     │
+├──────────────────────────────────────────────────────────────┤
+│ Spark Batch Job (Airflow - Every 5 minutes)                 │
+│ Input: Silver Delta Lake                                     │
+│ Processing: Dimensional modeling                             │
+│ Output: 5 Delta tables                                       │
+│   - dim_customer (Customer dimension)                        │
+│   - dim_merchant (Merchant dimension)                        │
+│   - dim_time (Time dimension)                                │
+│   - dim_location (Location dimension)                        │
+│   - fact_transactions (Transaction facts)                    │
+└──────────────────────────────────────────────────────────────┘
+                            ↓
+┌──────────────────────────────────────────────────────────────┐
+│ Layer 5: Query & Consumption                                │
+├──────────────────────────────────────────────────────────────┤
+│ Trino Query Engine (Port 8085)                              │
+│   ├─ Delta Catalog (Primary): Query data từ _delta_log/     │
+│   └─ Hive Catalog (Optional): Metadata cache for SHOW TABLES│
+│                                                              │
+│ Hive Metastore 3.1.3 (Metadata Cache - Optional)            │
+│   - Vai trò: Tăng tốc discovery operations (~100ms)         │
+│   - KHÔNG dùng để query data (Delta connector đọc S3)       │
+│                                                              │
+│ Metabase (BI Dashboard)                                     │
+│   - Connection: jdbc:trino://trino:8081/delta               │
+│   - Queries: delta.gold.*, delta.silver.*, delta.bronze.*   │
+└──────────────────────────────────────────────────────────────┘
+                            ↓
+┌──────────────────────────────────────────────────────────────┐
+│ Layer 6: ML & Orchestration                                 │
+├──────────────────────────────────────────────────────────────┤
+│ Apache Airflow 2.8.0 (Workflow Orchestration)               │
+│   DAG 1: lakehouse_pipeline_taskflow (Every 5 min)          │
+│     - run_silver_transformation                              │
+│     - run_gold_transformation                                │
+│   DAG 2: model_retraining_taskflow (Daily 2 AM)             │
+│     - train_ml_models (RandomForest + LogisticRegression)    │
+│                                                              │
+│ MLflow 2.8.0 (Model Tracking)                               │
+│   - Experiment: fraud_detection_production                   │
+│   - Artifacts: s3a://lakehouse/models/                       │
+│   - Metrics: accuracy, precision, recall, F1, AUC            │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-**Đặc điểm kỹ thuật:**
+### 2.2. Component Details
 
-- **Exactly-once processing**: Checkpoint guarantees
-- **Fault tolerance**: Auto-recovery từ checkpoint
-- **Low latency**: 30-60 giây end-to-end
-- **Scalability**: Horizontal scaling với Spark workers
-- **Idempotency**: Delta Lake ACID transactions
+#### 2.2.1. Data Ingestion Layer
 
-#### 3.3.1. Chiến lược xử lý dữ liệu null
+**PostgreSQL 14 (Source Database)**
 
-Hệ thống áp dụng chiến lược xử lý null khác nhau cho từng layer theo nguyên tắc Lakehouse:
+- Role: OLTP database mô phỏng production system
+- Schema: 22 columns (transaction data)
+- CDC Config: `wal_level=logical`, `max_replication_slots=4`
+- Checkpoint Table: `producer_checkpoint` (track data producer progress)
 
-**Bronze Layer (Raw Data):**
+**Debezium 2.5 (CDC Connector)**
 
-- Giữ nguyên tất cả dữ liệu thô từ CDC (Debezium).
-- Chỉ filter tombstone/delete messages (after = null).
-- Không fillna hay dropna để đảm bảo tính toàn vẹn của raw data.
+- Mode: PostgreSQL connector với Kafka Connect
+- Capture: INSERT operations (UPDATE/DELETE optional)
+- Format: Debezium JSON with `after` field
+- Special Config: `decimal.handling.mode=double` (fix NUMERIC encoding)
+- Topic: `postgres.public.transactions`
 
-**Silver Layer (Curated Data):**
+**Apache Kafka**
 
-_Data Quality Checks:_
+- Broker: Single node (dev environment)
+- Partitions: 3 (for parallel processing)
+- Retention: 7 days
+- UI: Kafka UI on port 9002
 
-1. **Loại bỏ records không thể trace:**
+#### 2.2.2. Storage Layer
 
-   - `trans_num` (mã giao dịch): NULL → DROP record
-   - `cc_num` (ID khách hàng): NULL → DROP record
-   - `trans_timestamp` (partition key): NULL → DROP record
-   - _Lý do:_ Không thể trace/analyze giao dịch không có ID.
+**MinIO (S3-Compatible Object Storage)**
 
-2. **Fill null cho business-critical fields:**
+- Bucket: `lakehouse`
+- Structure:
+  - `/bronze/transactions/` - Raw CDC data
+  - `/silver/transactions/` - Feature engineered data
+  - `/gold/dim_*/` - Dimension tables
+  - `/gold/fact_*/` - Fact tables
+  - `/checkpoints/` - Spark streaming checkpoints
+  - `/models/` - MLflow artifacts
+- Access: `minio` / `minio123`
+- Endpoint: http://minio:9000
 
-   - `amt` (số tiền): NULL → Fill `0` (giao dịch không hợp lệ nhưng vẫn ghi nhận)
-   - `is_fraud` (label): NULL → Fill `0` (assume normal transaction)
+**Delta Lake 2.4.0**
 
-3. **Giữ null có ý nghĩa (semantic null):**
-   - `lat`, `long`, `merch_lat`, `merch_long`: Giữ NULL → Xử lý trong feature engineering
-   - _Lý do:_ NULL = "không có thông tin vị trí" ≠ tọa độ 0,0 (sai thông tin)
+- Format: Parquet + Transaction Log (`_delta_log/`)
+- Features:
+  - ACID transactions
+  - Time travel (version history)
+  - Schema evolution
+  - Audit logging
+  - Compaction (OPTIMIZE command)
+  - Vacuum (retention period)
+- Partition Strategy:
+  - Bronze/Silver: `year/month/day`
+  - Gold: Không partition (small dimensions)
 
-_Feature Engineering với Null-Safe Logic:_
+**Hive Metastore 3.1.3 (Optional Metadata Cache)**
 
-- `distance_km`: NULL khi thiếu tọa độ → Fill `-1` (đánh dấu missing, model học pattern)
-- `age`: NULL khi thiếu `dob` → Fill `-1` (unknown age)
-- `gender_encoded`: NULL → Fill `0` (assume female as default)
-- Time features (`hour`, `day_of_week`): Không có null (trans_timestamp đã validated)
-- Amount features: Không có null (amt đã filled 0)
+- Database: PostgreSQL (`metastore` db)
+- Purpose: Metadata cache cho Trino
+- Performance: SHOW TABLES ~100ms (vs ~1-2s direct S3 scan)
+- **KHÔNG dùng để query data** - chỉ cache schema info
+- Auto-registration: `register_tables_to_hive.py` (manual trigger)
 
-**Gold Layer (Analytics-Ready - Star Schema):**
+#### 2.2.3. Processing Layer
 
-Gold Layer sử dụng **mô hình Dimensional (Star Schema)** để tối ưu phân tích và truy vấn:
+**Apache Spark 3.4.1**
 
-_Dimensional Tables (Chiều):_
+- Mode: Spark Standalone Cluster
+- Components:
+  - 1 Master node (resource manager)
+  - 1 Worker node (executor)
+- Configuration:
+  - `spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension`
+  - `spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog`
+  - S3A credentials: `minio` / `minio123`
+  - Delta Lake JARs: pre-installed in custom image
 
-1. **dim_customer** - Thông tin khách hàng
+**Processing Jobs:**
 
-   - `customer_key` (PK = cc_num)
-   - Demographic: `first_name`, `last_name`, `gender`, `age`, `dob`, `job`
-   - Location: `customer_city`, `customer_state`, `customer_zip`, `customer_lat`, `customer_long`
-   - `customer_city_population`
-   - `last_updated` (metadata)
+1. **Bronze Streaming** (`streaming_job.py`)
+   - Mode: Continuous streaming
+   - Trigger: `availableNow=False` (continuous)
+   - CPU: ~195% (normal for streaming)
+   - Auto-start: Docker compose `depends_on`
 
-2. **dim_merchant** - Thông tin cửa hàng
+2. **Silver Batch** (`silver_job.py`)
+   - Mode: Batch ETL
+   - Trigger: Airflow every 5 minutes
+   - Processing: Incremental (watermark-based)
+   - CPU: 0% during sleep, spike when running
 
-   - `merchant_key` (PK - surrogate key)
-   - `merchant` (tên cửa hàng)
-   - `merchant_category` (loại hình kinh doanh)
-   - `merchant_lat`, `merchant_long` (vị trí)
-   - `last_updated` (metadata)
+3. **Gold Batch** (`gold_job.py`)
+   - Mode: Batch ETL
+   - Trigger: Airflow every 5 minutes after Silver
+   - Processing: Star schema transformation
+   - Output: 5 Delta tables
 
-3. **dim_time** - Chi tiết thời gian
+4. **ML Training** (`ml_training_job.py`)
+   - Mode: Batch ML
+   - Trigger: Airflow daily 2 AM
+   - Models: RandomForest + LogisticRegression
+   - Tracking: MLflow experiment
 
-   - `time_key` (PK - format: yyyyMMddHH)
-   - Date components: `year`, `month`, `day`, `hour`, `minute`
-   - Calendar: `day_of_week`, `week_of_year`, `quarter`
-   - Labels: `day_name`, `month_name`, `time_period` (Morning/Afternoon/Evening/Night)
-   - Flags: `is_weekend`
+#### 2.2.4. Query Layer
 
-4. **dim_location** - Chi tiết địa điểm
-   - `location_key` (PK - surrogate key)
-   - `city`, `state`, `zip`
-   - `lat`, `long`
-   - `city_pop` (dân số)
-   - `last_updated` (metadata)
+**Trino (Query Engine)**
 
-_Fact Table (Sự kiện):_
+- Version: Latest stable
+- Port: 8081 (internal), 8085 (external)
+- Catalogs:
+  - **`delta`** - Primary catalog (query data)
+  - **`hive`** - Metadata cache (list tables only)
+- Memory: 2GB heap (configurable)
+- Parallelism: 4 workers
 
-5. **fact_transactions** - Bảng trung tâm chứa tất cả giao dịch
-   - **Keys:**
-     - `transaction_key` (PK = trans_num)
-     - `customer_key` (FK → dim_customer)
-     - `merchant_key` (FK → dim_merchant)
-     - `time_key` (FK → dim_time)
-   - **Measures (Metrics):**
-     - `transaction_amount` (số tiền)
-     - `is_fraud` (nhãn thực tế)
-     - `fraud_prediction` (dự đoán từ ML model)
-     - `distance_km` (khoảng cách tính toán)
-     - `log_amount`, `amount_bin` (amount features)
-   - **Degenerate Dimensions:**
-     - `transaction_timestamp`, `transaction_category`, `unix_time`
-   - **Risk Indicators (Flags):**
-     - `is_distant_transaction`, `is_late_night`, `is_zero_amount`, `is_high_amount`
-   - **Time Features:**
-     - `transaction_hour`, `transaction_day_of_week`, `is_weekend_transaction`
-     - Cyclic encoding: `hour_sin`, `hour_cos`
-   - **Metadata:**
-     - `ingestion_time`, `fact_created_time`
+**Query Pattern:**
 
-_SQL Views (Tối ưu truy vấn):_
+```sql
+-- ✅ ĐÚNG - Query data qua Delta catalog
+SELECT * FROM delta.gold.fact_transactions;
 
-Trino tạo các **materialized views** trên dimensional model:
+-- ✅ OK - List tables qua Hive cache
+SHOW TABLES FROM hive.gold;
 
-- `daily_summary` - Metrics tổng hợp theo ngày
-- `hourly_summary` - Phân tích patterns theo giờ
-- `state_summary` - Phân tích địa lý theo bang
-- `category_summary` - Phân tích theo danh mục
-- `amount_summary` - Phân tích theo khoảng tiền
-- `latest_metrics` - Real-time monitoring metrics
-- `fraud_patterns` - Top fraud patterns
-- `merchant_analysis` - Phân tích merchants
-- `time_period_analysis` - Phân tích theo time period
+-- ❌ SAI - Query data qua Hive (không hỗ trợ Delta format)
+-- SELECT * FROM hive.gold.fact_transactions; -- Error!
+```
 
-_Null-Safe Aggregations:_
+#### 2.2.5. Orchestration Layer
 
-- Views sử dụng logic: `avg(CASE WHEN distance_km >= 0 THEN distance_km END)` (bỏ qua missing `-1`)
-- `sum(amt)`, `count(*)` an toàn vì đã processed ở Silver
-- Không có NULL trong metrics quan trọng cho Dashboard/BI
+**Apache Airflow 2.8.0**
 
-_Lợi ích Star Schema:_
+- Mode: Docker Compose deployment
+- Components:
+  - Webserver: UI on port 8081
+  - Scheduler: Task execution
+  - Database: PostgreSQL (`airflow` db)
+  - Executor: LocalExecutor
+- Auth: `admin` / `admin`
 
-- **Truy vấn nhanh:** Joins đơn giản (fact → dims)
-- **Linh hoạt:** Ad-hoc queries cho Chatbot/BI
-- **Hiệu quả:** Pre-joined data, optimized cho OLAP
-- **Mở rộng:** Dễ thêm dimensions/metrics mới
+**DAGs:**
 
-### 3.4. Layer 4: Inference (Dự đoán AI)
+1. `lakehouse_pipeline_taskflow` (Every 5 minutes)
+   - check_bronze_data
+   - run_silver_transformation
+   - run_gold_transformation
+   - verify_trino
+   - send_pipeline_summary
 
-- **FastAPI:** Cung cấp API `/predict`. Nhận thông tin giao dịch từ Spark, trả về kết quả dự đoán gian lận.
-
-### 3.5. Layer 5: Orchestration (Điều phối Batch)
-
-- **Apache Airflow:** Quản lý các tác vụ **định kỳ (Scheduled Tasks)** như huấn luyện mô hình và bảo trì hệ thống.
-
-### 3.6. Layer 6: Query & Consumption (Truy vấn & Sử dụng)
-
-- **Trino (PrestoSQL):** Engine truy vấn SQL phân tán tốc độ cao.
-  - **Delta Catalog**: Query data trực tiếp từ Delta Lake (`delta.bronze.*`, `delta.silver.*`, `delta.gold.*`)
-  - **Hive Catalog**: Metadata cache (optional) - chỉ dùng `SHOW TABLES`, KHÔNG query data
-- **Hive Metastore 3.1.3:** Metadata cache layer (optional optimization).
-  - Vai trò: Tăng tốc `SHOW TABLES/SCHEMAS` (~100ms thay vì ~1-2s scan S3)
-  - Không tham gia query data (Delta connector đọc trực tiếp từ `_delta_log/` + MinIO)
-  - Có thể bỏ: Delta tự discover tables, nhưng chậm hơn
-- **Metabase:** Dashboard giám sát (kết nối Delta catalog).
-- **Chatbot (Streamlit + LangChain):** Công cụ xác minh nghiệp vụ (query qua Delta catalog).
+2. `model_retraining_taskflow` (Daily 2 AM)
+   - check_data_availability
+   - train_ml_models
+   - verify_mlflow
+   - send_notification
 
 ---
 
-## 4. QUY TRÌNH XỬ LÝ CHI TIẾT (WORKFLOWS)
+## 3. DATA SCHEMA & PROCESSING
 
-### 4.1. Luồng xử lý thời gian thực (Real-time Streaming Pipeline)
+### 3.1. Bronze Layer (Raw CDC)
 
-_Luồng này chạy liên tục 24/7 với 3 Spark Streaming jobs song song, không cần Airflow can thiệp._
+**Source:** Kafka topic `postgres.public.transactions`
 
-**Tổng quan kiến trúc:**
+**Schema Definition (22 columns):**
 
+```python
+schema = StructType([
+    StructField("trans_date_trans_time", StringType()),  # Parse later
+    StructField("cc_num", StringType()),                 # Cast to LongType
+    StructField("merchant", StringType()),
+    StructField("category", StringType()),
+    StructField("amt", DoubleType()),                    # ⚠️ From Debezium double
+    StructField("first", StringType()),
+    StructField("last", StringType()),
+    StructField("gender", StringType()),
+    StructField("street", StringType()),
+    StructField("city", StringType()),
+    StructField("state", StringType()),
+    StructField("zip", StringType()),
+    StructField("lat", DoubleType()),
+    StructField("long", DoubleType()),
+    StructField("city_pop", StringType()),               # Cast to IntegerType
+    StructField("job", StringType()),
+    StructField("dob", StringType()),                    # Parse to DateType
+    StructField("trans_num", StringType()),
+    StructField("unix_time", StringType()),              # Cast to LongType
+    StructField("merch_lat", DoubleType()),
+    StructField("merch_long", DoubleType()),
+    StructField("is_fraud", StringType())                # Cast to IntegerType
+])
 ```
-PostgreSQL INSERT → Debezium CDC → Kafka
-                                    ↓
-                    ┌───────────────────────────┐
-                    │  Bronze Streaming Job     │
-                    │  (Auto-started)           │
-                    └───────────────────────────┘
-                                    ↓
-                    ┌───────────────────────────┐
-                    │  Silver Streaming Job     │
-                    │  (Trigger: 30s)           │
-                    └───────────────────────────┘
-                                    ↓
-                    ┌───────────────────────────┐
-                    │  Gold Streaming Job       │
-                    │  (Trigger: 30s)           │
-                    └───────────────────────────┘
+
+**Processing Logic:**
+
+1. Read from Kafka with `startingOffsets=latest`
+2. Parse Debezium JSON: `get_json_object(value, '$.after')`
+3. Filter tombstones: `after IS NOT NULL`
+4. Extract fields using `from_json(after, schema)`
+5. Add metadata: `ingestion_time`, `year`, `month`, `day`
+6. Write to Delta: `append` mode, partitioned by `year/month/day`
+7. Checkpoint: `s3a://lakehouse/checkpoints/kafka_to_bronze`
+
+**Special Handling:**
+
+- `amt` field: Debezium sends as JSON double (not Base64)
+  - Connector config: `decimal.handling.mode=double`
+  - No need to decode - direct DoubleType parsing
+
+### 3.2. Silver Layer (Curated + Features)
+
+**Input:** Bronze Delta Lake (incremental read)
+
+**Data Quality Checks:**
+
+```python
+# 1. Drop invalid records
+df = df.filter(
+    (col("trans_num").isNotNull()) &
+    (col("cc_num").isNotNull()) &
+    (col("trans_timestamp").isNotNull())
+)
+
+# 2. Fill missing critical fields
+df = df.fillna({
+    "amt": 0.0,           # Zero-amount transaction
+    "is_fraud": 0         # Assume normal
+})
+
+# 3. Keep semantic nulls (có ý nghĩa)
+# lat, long, merch_lat, merch_long: NULL = "no location info"
+# → Xử lý trong feature engineering
 ```
 
-**Chi tiết từng bước:**
+**Feature Engineering (40 features):**
 
-1. **Phát sinh giao dịch:** Python Producer `INSERT` 1 dòng vào PostgreSQL (Giả lập giao dịch mới).
+**Geographic Features (2):**
 
-2. **CDC:** Debezium bắt sự kiện Insert → Gửi bản tin JSON vào Kafka topic `postgres.public.transactions`.
+```python
+# Haversine distance (km)
+distance_km = haversine_distance(lat, long, merch_lat, merch_long)
+  # Fill -1 if any coordinate is NULL
 
-3. **Spark - Bronze Layer (Streaming - Auto-started):**
+# Distant transaction flag
+is_distant_transaction = (distance_km > 50).cast("int")
+```
 
-   - **Input**: Đọc từ Kafka topic `postgres.public.transactions`
-   - **Processing**:
-     - Filter tombstone messages (Debezium delete events với `after = null`)
-     - Parse Debezium `after` field (JSON format)
-     - **Schema Definition**: Áp dụng schema với các kiểu dữ liệu phù hợp:
-       - `amt`: **DoubleType** (Debezium gửi NUMERIC từ Postgres dưới dạng JSON double)
-       - `cc_num`, `zip`, `city_pop`, `unix_time`: StringType (cast sau)
-       - `lat`, `long`, `merch_lat`, `merch_long`: DoubleType (native support)
-     - **Type Casting**: Cast các trường StringType → numeric types
-     - Giữ nguyên null values (raw data integrity)
-   - **Output**: Ghi vào bảng **Bronze** Delta Lake
-     - Mode: `append` (append-only)
-     - Partition: `year/month/day`
-     - Checkpoint: `s3a://lakehouse/checkpoints/kafka_to_bronze`
-   - **Trigger**: Continuous (process immediately when data arrives)
-   - **State**: Auto-started với `docker-compose up`
+**Demographic Features (2):**
 
-4. **Spark - Silver Layer (Streaming - Manual start):**
+```python
+# Age calculation
+age = year(current_date()) - year(to_date(dob))
+  # Fill -1 if dob is NULL
 
-   - **Input**: Streaming read từ Bronze Delta Lake
-   - **Data Quality Checks**:
-     - Drop records có `trans_num`, `cc_num`, hoặc `trans_timestamp` NULL
-     - **amt field validation**:
-       - Bronze đã có `amt` dạng DoubleType (từ Debezium CDC)
-       - Nếu NULL → Fill `0.0` (giao dịch không hợp lệ)
-       - Filter `amt > 0` trong ML training (loại bỏ zero-amount transactions)
-     - Fill `is_fraud = 0` nếu NULL (assume normal)
-   - **Feature Engineering** (20+ features):
-     - **Geographic**: `distance_km` (Haversine), `is_distant_transaction`
-     - **Demographic**: `age`, `gender_encoded`
-     - **Time**: `hour`, `day_of_week`, `is_weekend`, `is_late_night`, cyclic encoding (`hour_sin`, `hour_cos`)
-     - **Amount**: `log_amount`, `amount_bin`, `is_zero_amount`, `is_high_amount`
-   - **Real-time Inference (Optional - nếu có FastAPI)**:
-     - Spark gửi features đến FastAPI `/predict`
-     - Lưu cả `is_fraud` (ground truth) và `fraud_prediction` (model output)
-   - **Output**: Ghi vào bảng **Silver** Delta Lake
-     - Mode: `append`
-     - Partition: `year/month/day`
-     - Checkpoint: `s3a://lakehouse/checkpoints/bronze_to_silver`
-   - **Trigger**: `processingTime="30 seconds"` (micro-batch)
-   - **State**: Chạy liên tục, tự động xử lý data mới từ Bronze
+# Gender encoding
+gender_encoded = when(col("gender") == "M", 1).otherwise(0)
+  # NULL → 0 (default female)
+```
 
-5. **Spark - Gold Layer (Streaming - Manual start):**
+**Time Features (6):**
 
-   - **Input**: Streaming read từ Silver Delta Lake
-   - **Processing**: Tạo dimensional model (Star Schema)
-     - **4 Dimension Tables**:
-       - `dim_customer`: Deduplicate by `cc_num`
-       - `dim_merchant`: Deduplicate by `merchant + location`
-       - `dim_time`: Deduplicate by `time_key` (yyyyMMddHH)
-       - `dim_location`: Deduplicate by `city + state + zip`
-     - **1 Fact Table**:
-       - `fact_transactions`: All transaction metrics + foreign keys
-   - **Output**: 5 Delta Lake tables trong `s3a://lakehouse/gold/`
-     - Mode: `append` (streaming deduplication)
-     - Checkpoint: `s3a://lakehouse/checkpoints/silver_to_gold/*`
-   - **Trigger**: `processingTime="30 seconds"` (micro-batch)
-   - **State**: Chạy liên tục, tự động xử lý data mới từ Silver
+```python
+# Extract time components
+hour = hour(col("trans_timestamp"))
+day_of_week = dayofweek(col("trans_timestamp"))  # 1=Sun, 7=Sat
+is_weekend = (day_of_week.isin(1, 7)).cast("int")
+is_late_night = ((hour >= 22) | (hour <= 6)).cast("int")
 
-6. **Query Layer (Real-time Analytics):**
-   - **Trino**: Query dimensional model qua SQL views
-   - **Metabase**: Dashboard tự động refresh (1-60 phút)
-   - **Chatbot**: Ad-hoc queries qua LangChain + Trino
+# Cyclic encoding (preserve circular nature)
+hour_sin = sin(2 * pi * hour / 24)
+hour_cos = cos(2 * pi * hour / 24)
+```
 
-**Đặc điểm kỹ thuật:**
+**Amount Features (4):**
 
-- **End-to-end latency**: 30-60 giây (từ PostgreSQL INSERT đến Gold)
-- **Throughput**: ~10,000 transactions/second (có thể scale)
-- **Fault tolerance**: Checkpoint-based recovery
-- **Exactly-once**: Delta Lake ACID + Spark checkpoints
-- **Monitoring**: Spark UI (http://localhost:8080)
+```python
+# Log transformation (handle zero)
+log_amount = log1p(col("amt"))  # log(1 + amt)
 
-**Cách khởi động streaming pipeline:**
+# Binning
+amount_bin = when(amt < 50, 0)
+           .when(amt < 100, 1)
+           .when(amt < 200, 2)
+           .otherwise(3)
+
+# Flags
+is_zero_amount = (amt == 0).cast("int")
+is_high_amount = (amt > 1000).cast("int")
+```
+
+**Original Features (26):** Preserve all Bronze columns
+
+**Output:** 40 total features
+
+**Partition:** `year/month/day` (same as Bronze)
+
+**Write Mode:** `append` (incremental)
+
+### 3.3. Gold Layer (Star Schema)
+
+**Dimensional Model:**
+
+**1. dim_customer**
+
+```python
+PK: customer_key (cc_num)
+Attributes:
+  - first_name, last_name, gender, age, dob, job
+  - customer_city, customer_state, customer_zip
+  - customer_lat, customer_long
+  - customer_city_population
+  - last_updated
+```
+
+**2. dim_merchant**
+
+```python
+PK: merchant_key (MD5 hash)
+Attributes:
+  - merchant_name
+  - merchant_category
+  - merchant_lat, merchant_long
+  - last_updated
+```
+
+**3. dim_time**
+
+```python
+PK: time_key (yyyyMMddHH format)
+Attributes:
+  - year, month, day, hour, minute
+  - day_of_week, week_of_year, quarter
+  - day_name, month_name
+  - time_period (Morning/Afternoon/Evening/Night)
+  - is_weekend
+```
+
+**4. dim_location**
+
+```python
+PK: location_key (MD5 hash)
+Attributes:
+  - city, state, zip
+  - lat, long
+  - city_pop
+  - last_updated
+```
+
+**5. fact_transactions**
+
+```python
+PK: transaction_key (trans_num)
+Foreign Keys:
+  - customer_key → dim_customer
+  - merchant_key → dim_merchant
+  - time_key → dim_time
+
+Measures:
+  - transaction_amount
+  - is_fraud (ground truth)
+  - fraud_prediction (from ML model - optional)
+  - distance_km
+  - log_amount, amount_bin
+
+Degenerate Dimensions:
+  - transaction_timestamp
+  - transaction_category
+  - unix_time
+
+Risk Indicators:
+  - is_distant_transaction
+  - is_late_night
+  - is_zero_amount
+  - is_high_amount
+
+Time Features:
+  - transaction_hour, transaction_day_of_week
+  - is_weekend_transaction
+  - hour_sin, hour_cos
+
+Metadata:
+  - ingestion_time
+  - fact_created_time
+```
+
+**Processing Logic:**
+
+```python
+# 1. Extract unique dimensions (dedup)
+dim_customer = silver_df.select(customer_cols).dropDuplicates(["cc_num"])
+dim_merchant = silver_df.select(merchant_cols).dropDuplicates(["merchant", "merch_lat", "merch_long"])
+dim_time = silver_df.select(time_cols).dropDuplicates(["time_key"])
+dim_location = silver_df.select(location_cols).dropDuplicates(["city", "state", "zip"])
+
+# 2. Create fact table with foreign keys
+fact_transactions = silver_df \
+    .join(dim_customer, on="cc_num") \
+    .join(dim_merchant, on=["merchant", "merch_lat", "merch_long"]) \
+    .join(dim_time, on="time_key") \
+    .select(fact_cols)
+
+# 3. Write to Delta (merge mode for dimensions, append for facts)
+dim_customer.write.mode("overwrite").save("s3a://lakehouse/gold/dim_customer")
+fact_transactions.write.mode("append").save("s3a://lakehouse/gold/fact_transactions")
+```
+
+---
+
+## 4. MACHINE LEARNING PIPELINE
+
+### 4.1. Training Job Architecture
+
+**File:** `spark/app/ml_training_job.py`
+
+**Execution:** Airflow DAG `model_retraining_taskflow` (daily 2 AM)
+
+**Data Source:** Silver Delta Lake
+
+**Training Pipeline:**
+
+```python
+# 1. Load data
+df = spark.read.format("delta").load("s3a://lakehouse/silver/transactions")
+
+# 2. Filter valid amounts
+df = df.filter(col("amt") > 0)  # Remove zero-amount transactions
+
+# 3. Feature selection (20 features)
+features = [
+    # Amount
+    "amt", "log_amount", "is_zero_amount", "is_high_amount", "amount_bin",
+    # Geographic
+    "distance_km", "is_distant_transaction", "lat", "long", "merch_lat", "merch_long", "city_pop",
+    # Demographic
+    "age", "gender_encoded",
+    # Time
+    "hour", "day_of_week", "is_weekend", "is_late_night", "hour_sin", "hour_cos"
+]
+
+# 4. Handle missing values
+from pyspark.ml.feature import Imputer
+imputer = Imputer(strategy="median", inputCols=features, outputCols=features)
+df = imputer.fit(df).transform(df)
+
+# 5. Class balancing (Undersample majority)
+fraud_df = df.filter(col("is_fraud") == 1)
+normal_df = df.filter(col("is_fraud") == 0)
+fraud_count = fraud_df.count()
+normal_df_balanced = normal_df.sample(fraction=fraud_count / normal_df.count(), seed=42)
+balanced_df = fraud_df.union(normal_df_balanced)
+
+# 6. Feature scaling
+from pyspark.ml.feature import MinMaxScaler, VectorAssembler
+assembler = VectorAssembler(inputCols=features, outputCol="features_raw")
+scaler = MinMaxScaler(inputCol="features_raw", outputCol="features")
+pipeline_prep = Pipeline(stages=[assembler, scaler])
+df_scaled = pipeline_prep.fit(balanced_df).transform(balanced_df)
+
+# 7. Train/Test split
+train_df, test_df = df_scaled.randomSplit([0.8, 0.2], seed=42)
+
+# 8. Train models
+from pyspark.ml.classification import RandomForestClassifier, LogisticRegression
+
+rf = RandomForestClassifier(
+    featuresCol="features",
+    labelCol="is_fraud",
+    numTrees=200,
+    maxDepth=30,
+    seed=42
+)
+
+lr = LogisticRegression(
+    featuresCol="features",
+    labelCol="is_fraud",
+    maxIter=1000,
+    regParam=0.0
+)
+
+rf_model = rf.fit(train_df)
+lr_model = lr.fit(train_df)
+
+# 9. Evaluate
+from pyspark.ml.evaluation import BinaryClassificationEvaluator, MulticlassClassificationEvaluator
+
+predictions_rf = rf_model.transform(test_df)
+predictions_lr = lr_model.transform(test_df)
+
+# Metrics
+metrics = {
+    "accuracy": accuracy_evaluator.evaluate(predictions),
+    "precision": precision_evaluator.evaluate(predictions),
+    "recall": recall_evaluator.evaluate(predictions),
+    "f1": f1_evaluator.evaluate(predictions),
+    "auc": auc_evaluator.evaluate(predictions)
+}
+
+# Confusion matrix
+tp = predictions.filter((col("is_fraud") == 1) & (col("prediction") == 1)).count()
+tn = predictions.filter((col("is_fraud") == 0) & (col("prediction") == 0)).count()
+fp = predictions.filter((col("is_fraud") == 0) & (col("prediction") == 1)).count()
+fn = predictions.filter((col("is_fraud") == 1) & (col("prediction") == 0)).count()
+
+# 10. Log to MLflow
+import mlflow
+mlflow.set_tracking_uri("http://mlflow:5000")
+mlflow.set_experiment("fraud_detection_production")
+
+with mlflow.start_run(run_name=f"RandomForest_{timestamp}"):
+    mlflow.log_params({
+        "model_type": "RandomForest",
+        "num_trees": 200,
+        "max_depth": 30,
+        "train_samples": train_df.count(),
+        "test_samples": test_df.count()
+    })
+    mlflow.log_metrics(metrics)
+    mlflow.log_metrics({"tp": tp, "tn": tn, "fp": fp, "fn": fn})
+    mlflow.spark.log_model(
+        rf_model,
+        "model",
+        registered_model_name="fraud_detection_randomforest"
+    )
+```
+
+### 4.2. MLflow Integration
+
+**Tracking Server:**
+
+- URL: http://mlflow:5000
+- Backend: PostgreSQL (`mlflow` db)
+- Artifacts: MinIO S3 (`s3a://lakehouse/models/`)
+
+**Experiment:**
+
+- Name: `fraud_detection_production`
+- Runs: 2 per training cycle (RandomForest + LogisticRegression)
+
+**Logged Artifacts:**
+
+- Model binary (Spark MLlib format)
+- Feature importance (RandomForest)
+- Training logs (stdout)
+
+**Environment Variables (S3 access):**
 
 ```bash
-# Terminal 1: Bronze (đã auto-start)
-# Không cần thao tác
-
-# Terminal 2: Silver Streaming
-docker exec -it spark-master bash -c "spark-submit /app/silver_layer_job.py"
-
-# Terminal 3: Gold Streaming
-docker exec -it spark-master bash -c "spark-submit /app/gold_layer_dimfact_job.py"
+AWS_ACCESS_KEY_ID=minio
+AWS_SECRET_ACCESS_KEY=minio123
+MLFLOW_S3_ENDPOINT_URL=http://minio:9000
 ```
 
-> **Lưu ý**: Cả 3 jobs phải chạy song song và liên tục. Không tắt terminal.
+### 4.3. Expected Performance
 
-### 4.2. Luồng Batch & Bảo trì (Batch Pipeline - Airflow Detail)
+**Based on Kaggle benchmark:**
 
-_Luồng này chạy định kỳ theo lịch, do **Airflow** kích hoạt._
+| Model              | Accuracy | Precision | Recall | F1    | AUC   |
+| ------------------ | -------- | --------- | ------ | ----- | ----- |
+| RandomForest       | ~96.8%   | ~95%      | ~98%   | ~96.5%| ~99.5%|
+| LogisticRegression | ~85.3%   | ~80%      | ~90%   | ~85%  | ~92%  |
 
-#### **DAG 01: Automated Model Retraining (Tự động huấn luyện lại mô hình)**
+**Training Time:**
 
-- **Lịch chạy:** 02:00 Hàng ngày (Tránh conflict với streaming jobs).
-- **Chiến lược:** Tạm dừng streaming jobs → Train models → Khởi động lại streaming.
-- **Models:** Random Forest + Logistic Regression (2 models cho thesis explanation simplicity).
-
-**Tasks workflow (4 bước - Simplified):**
-
-1. **check_data_availability**: Validate Silver layer có đủ dữ liệu để training
-2. **train_models**: Huấn luyện 2 models với enhanced logging
-   - **Data Source**: Silver Delta Lake (`s3a://lakehouse/silver/transactions`)
-   - **Data Filtering**: `amt > 0` (loại bỏ zero-amount transactions only)
-     - _Lý do thay đổi_: Filter cũ `5 <= amt <= 1250` quá strict, loại hết data thực tế
-     - _Giải pháp_: Chỉ filter transactions có số tiền hợp lệ (> 0)
-   - **Class Balancing**: Undersample majority class (1:1 ratio như Kaggle)
-   - **Features**: 20 features (geographic, demographic, time, amount)
-     - Transaction amount features: `amt`, `log_amount`, `is_zero_amount`, `is_high_amount`, `amount_bin`
-     - Geographic features: `distance_km`, `is_distant_transaction`, `lat`, `long`, `merch_lat`, `merch_long`, `city_pop`
-     - Demographic features: `age`, `gender_encoded`
-     - Time features: `hour`, `day_of_week`, `is_weekend`, `is_late_night`, `hour_sin`, `hour_cos`
-   - **Missing Value Handling**: Fill với median cho từng feature (null-safe)
-   - **Feature Scaling**: MinMax scaler (0-1 normalization)
-   - **Train/Test Split**: 80/20 với seed=42
-   - **Model Configs**:
-     - RandomForest: 200 trees, maxDepth=30, minInstancesPerNode=1
-     - LogisticRegression: maxIter=1000, regParam=0.0, standardization=False
-   - **Metrics Tracked**: Accuracy, Precision, Recall, Specificity, F1, AUC, Confusion Matrix (TP/TN/FP/FN)
-     **MLflow Integration:**
-
-- **Experiment**: `fraud_detection_production`
-- **Registered Models**:
-  - `fraud_detection_randomforest`
-  - `fraud_detection_logisticregression`
-- **Artifacts Storage**: S3/MinIO (`s3://lakehouse/models/`)
-- **Environment Variables** (truyền qua spark-submit):
-  - `spark.executorEnv.AWS_ACCESS_KEY_ID=minio`
-  - `spark.executorEnv.AWS_SECRET_ACCESS_KEY=minio123`
-  - `spark.executorEnv.MLFLOW_S3_ENDPOINT_URL=http://minio:9000`
-- **Tracked Parameters**: model type, train/test samples, num_features, hyperparameters
-- **Tracked Metrics**: accuracy, precision, recall, specificity, f1_score, auc, training_duration_seconds
-- **Confusion Matrix**: TP, TN, FP, FN logged as metrics
-- **Model Logging**: `mlflow.spark.log_model()` với registered_model_name
-  - `fraud_detection_logisticregression`
-- **Artifacts Storage**: S3/MinIO (`s3a://mlflow/artifacts/`)
-- **Tracked Parameters**: model type, train/test samples, num_features, hyperparameters
-- **Tracked Metrics**: accuracy, precision, recall, specificity, f1_score, auc, training_duration
-- **Confusion Matrix**: TP, TN, FP, FN logged as metrics
-
-**Enhanced Logging cho Airflow:**
-
-ML training job (`ml_training_job.py`) implement `log_step(step_name, message)` function:
-
-- Format: `[STEP: {step_name}] {message}`
-- Flush: `sys.stdout.flush()` sau mỗi log để hiện ngay trên Airflow UI
-- Step types: INIT, DATA_LOAD, DATA_FILTER, FEATURE_PREP, CLASS_BALANCE, DATA_SPLIT, MODEL_CONFIG, TRAINING, EVALUATION, RESULTS, MLFLOW, SUCCESS, ERROR
-
-**Expected Performance (Kaggle benchmark):**
-**Fault Tolerance:**
-
-- Nếu training fail → Airflow retry 1 lần (configured in DAG default_args)
-- Nếu vẫn fail → Send alert notification, giữ nguyên models cũ trong MLflow registry
-- Streaming jobs KHÔNG bị dừng (đã loại bỏ stop/restart tasks để tránh downtime)
-  **Fault Tolerance:**
-
-- Nếu training fail → Airflow retry 1 lần
-- Nếu vẫn fail → Send alert, giữ nguyên models cũ
-- Streaming jobs luôn được restart (đảm bảo pipeline tiếp tục)
-
-#### **DAG 02: Lakehouse Maintenance (Bảo trì hệ thống)**
-
-- **Lịch chạy:** 02:00 sáng Chủ Nhật hàng tuần.
-- **Tasks:**
-  1. **Optimize:** Gộp các file nhỏ (small files) sinh ra do streaming thành file lớn.
-  2. **Vacuum:** Xóa vật lý các file dữ liệu cũ không còn dùng đến để giải phóng dung lượng MinIO.
-  3. **Refresh Views:** Cập nhật metadata cho Trino views (nếu cần).
-
-### 4.3. Luồng Nghiệp vụ (Business Flow)
-
-1. **Giám sát Real-time:**
-
-   - Chuyên viên nhìn Dashboard Metabase (query từ Gold views: `daily_summary`, `latest_metrics`)
-   - Dashboard tự động refresh mỗi 1-5 phút (configurable)
-   - Thấy cảnh báo: Gian lận tăng 300% tại khu vực New York trong 10 phút qua
-   - **Độ trễ dữ liệu**: ~30-60 giây từ transaction thực tế
-
-2. **Điều tra Chi tiết:**
-
-   - Chuyên viên mở Chatbot Streamlit
-   - Nhập câu hỏi: _"Liệt kê 5 giao dịch gian lận có số tiền lớn nhất tại New York trong 30 phút qua"_
-   - Chatbot (LangChain) tự động sinh SQL query:
-     ```sql
-     SELECT f.*, c.first_name, c.last_name, m.merchant
-     FROM lakehouse.gold.fact_transactions f
-     JOIN lakehouse.gold.dim_customer c ON f.customer_key = c.customer_key
-     JOIN lakehouse.gold.dim_merchant m ON f.merchant_key = m.merchant_key
-     WHERE f.is_fraud = '1'
-       AND c.customer_state = 'NY'
-       AND f.transaction_timestamp >= current_timestamp - INTERVAL '30' MINUTE
-     ORDER BY f.transaction_amount DESC
-     LIMIT 5;
-     ```
-
-3. **Xử lý Nghiệp vụ:**
-
-   - Chatbot (qua Trino) truy vấn dimensional model → Trả về danh sách chi tiết:
-     - Trans_num: T12345, Amount: $5,000, Customer: John Doe, Merchant: ABC Store
-     - Distance: 500km (suspicious), Time: 2:30 AM (late night)
-     - Fraud_prediction: 0.98 (high confidence)
-
-4. **Quyết định & Hành động:**
-   - Chuyên viên xác minh thông tin
-   - Thực hiện khóa thẻ trên hệ thống nguồn (PostgreSQL)
-   - Debezium CDC tự động phát hiện UPDATE → Kafka → Bronze → Silver → Gold
-   - Dashboard cập nhật status trong ~1 phút
-
-**Lợi ích streaming architecture:**
-
-- ✅ **Fast investigation**: Query data gần real-time (~1 phút delay)
-- ✅ **Complete context**: Star Schema cung cấp full dimensional context
-- ✅ **Automated alerts**: Dashboard metrics trigger alerts
-- ✅ **Audit trail**: Delta Lake time travel cho forensics
+- With 50K records: ~2-3 minutes
+- With 1M records: ~10-15 minutes
 
 ---
 
-## 5. YÊU CẦU CÔNG NGHỆ & MÔI TRƯỜNG
+## 5. DEPLOYMENT & OPERATIONS
 
-### 5.1. Môi trường phát triển & triển khai
+### 5.1. Docker Compose Services
 
-**Hệ điều hành yêu cầu:** Windows 10/11 (64-bit)
+**Total:** 15 services
 
-**Công cụ bắt buộc:**
+| Service              | Image                    | Port       | Dependencies                   |
+| -------------------- | ------------------------ | ---------- | ------------------------------ |
+| postgres             | postgres:14              | 5432       | -                              |
+| kafka                | cp-kafka                 | 9092       | zookeeper                      |
+| debezium             | debezium/connect         | 8083       | kafka, postgres                |
+| minio                | minio/minio              | 9000, 9001 | -                              |
+| spark-master         | custom-spark             | 7077, 8080 | minio                          |
+| spark-worker         | custom-spark             | -          | spark-master                   |
+| bronze-streaming     | custom-spark             | -          | kafka, spark-master            |
+| hive-metastore       | custom-hive              | 9083       | metastore-db, minio            |
+| metastore-db         | postgres:14              | -          | -                              |
+| trino                | trinodb/trino            | 8081, 8085 | hive-metastore, minio          |
+| mlflow               | mlflow/mlflow            | 5000       | postgres, minio                |
+| airflow-webserver    | apache/airflow           | 8081       | airflow-db                     |
+| airflow-scheduler    | apache/airflow           | -          | airflow-db                     |
+| airflow-db           | postgres:14              | -          | -                              |
+| data-producer        | custom-producer          | -          | postgres                       |
 
-- **Docker Desktop for Windows** (phiên bản 4.x trở lên)
-  - WSL 2 backend được khuyến nghị
-  - Yêu cầu tối thiểu: 8GB RAM, 50GB disk space
-- **PowerShell 5.1+** (Đã cài sẵn trên Windows)
+### 5.2. Resource Requirements
 
-**⚠️ Lưu ý quan trọng:**
+**Development Environment:**
 
-- Dự án được thiết kế **chỉ cho môi trường Windows + Docker Desktop**.
-- **KHÔNG** cần tạo các script Linux (`.sh`) riêng cho host machine.
-- Các file `.sh` trong project chỉ chạy **bên trong Docker containers** (Linux-based images), không được thực thi trực tiếp trên Windows host.
-- Sử dụng **PowerShell scripts (`.ps1`)** cho tất cả automation tasks trên Windows host.
+- CPU: 6 cores minimum (8+ recommended)
+- RAM: 10GB minimum (16GB recommended)
+- Disk: 30GB free space
+- Network: Stable internet for Docker images
 
-### 5.2. Kiến trúc triển khai (Docker Compose)
+**Production Scaling (future):**
 
-Hệ thống triển khai hoàn toàn trên Docker Compose:
+- Kafka: 3 brokers (HA)
+- Spark: 3+ workers (horizontal scaling)
+- MinIO: Distributed mode (4+ nodes)
+- Trino: Separate coordinator + workers
 
-| Thành phần        | Image/Service            | Cổng (Port) | Vai trò                 |
-| :---------------- | :----------------------- | :---------- | :---------------------- |
-| **Source DB**     | `postgres:14`            | 5432        | Nguồn dữ liệu giả lập.  |
-| **CDC**           | `debezium/connect`       | 8083        | Bắt thay đổi dữ liệu.   |
-| **Kafka**         | `confluentinc/cp-kafka`  | 9092        | Hàng đợi thông điệp.    |
-| **Storage**       | `minio/minio`            | 9000, 9001  | Data Lake (S3).         |
-| **Spark**         | `bitnami/spark`          | 7077, 8080  | Xử lý Stream & Batch.   |
-| **Query Engine**  | `trinodb/trino`          | 8082        | Truy vấn SQL tương tác. |
-| **Orchestration** | `apache/airflow`         | 8081        | Điều phối tác vụ Batch. |
-| **MLOps**         | `ghcr.io/mlflow/mlflow`  | 5000        | Quản lý model.          |
-| **Visualization** | `metabase/metabase`      | 3000        | Dashboard.              |
-| **API**           | `fastapi-app` (Custom)   | 8000        | API dự đoán Real-time.  |
-| **Chatbot**       | `streamlit-app` (Custom) | 8501        | Giao diện Chatbot.      |
+### 5.3. Monitoring & Observability
 
-### 5.3. Cấu trúc thư mục quan trọng
+**Service UIs:**
 
+- Spark Master: http://localhost:8080
+- Airflow: http://localhost:8081
+- Trino: http://localhost:8085
+- MLflow: http://localhost:5000
+- MinIO: http://localhost:9001
+- Kafka UI: http://localhost:9002
+
+**Log Aggregation:**
+
+```bash
+# Centralized logs
+docker logs <service-name> --tail 100 --follow
+
+# Filter by keyword
+docker logs bronze-streaming | grep "ERROR"
+
+# Export logs
+docker logs airflow-scheduler > logs/airflow.log
 ```
-real-time-fraud-detection-lakehouse/
-├── deployment/              # Scripts tự động chạy trong Docker containers
-│   ├── debezium/           # Auto-setup Debezium connector (.sh - runs in container)
-│   └── minio/              # Auto-setup MinIO buckets (.sh - runs in container)
-├── scripts/                # Windows automation scripts
-│   ├── cleanup.ps1         # Cleanup Docker resources (PowerShell)
-│   └── wait-for-services.ps1  # Health check utility (PowerShell)
-├── database/               # PostgreSQL initialization scripts
-├── spark/app/              # PySpark jobs (chạy trong Spark containers)
-├── services/               # Custom services (FastAPI, Chatbot, Producer)
-└── docker-compose.yml      # Orchestration configuration
+
+**Metrics:**
+
+```bash
+# Resource usage
+docker stats --no-stream
+
+# Specific service
+docker stats bronze-streaming spark-master --no-stream
 ```
 
-**Quy tắc phân chia scripts:**
+### 5.4. Backup & Recovery
 
-- **PowerShell (`.ps1`)**: Chạy trên Windows host để quản lý Docker (start/stop/cleanup)
-- **Bash (`.sh`)**: Chỉ chạy bên trong Linux containers (deployment automation, service initialization)
+**Data Persistence:**
+
+- MinIO data: `/data` volume
+- PostgreSQL data: Named volumes (`postgres_data`, `airflow_db`, etc.)
+- Spark checkpoints: MinIO bucket
+
+**Backup Strategy:**
+
+```bash
+# Backup MinIO bucket
+docker exec minio mc mirror lakehouse /backup/lakehouse-$(date +%Y%m%d)
+
+# Backup Postgres
+docker exec postgres pg_dump -U postgres frauddb > backup/frauddb.sql
+
+# Backup Airflow metadata
+docker exec airflow-db pg_dump -U airflow airflow > backup/airflow.sql
+```
+
+**Disaster Recovery:**
+
+```bash
+# Reset and restore
+docker compose down -v
+docker compose up -d
+# Wait for services ready
+docker exec minio mc cp -r /backup/lakehouse-20241204 lakehouse/
+docker exec postgres psql -U postgres < backup/frauddb.sql
+```
 
 ---
 
-## 6. KẾT QUẢ BÀN GIAO (DELIVERABLES)
+## 6. TESTING & VALIDATION
 
-1. **Mã nguồn (Source Code):** Full stack trên GitHub, bao gồm scripts khởi tạo và Docker Compose.
-2. **Báo cáo (Report):** Tài liệu thuyết minh chi tiết kiến trúc Lakehouse, giải thích thuật toán ML và quy trình Airflow.
-3. **Sản phẩm Demo:**
-   - Hệ thống chạy mượt mà từ Ingestion -> Dashboard (Real-time).
-   - Chatbot trả lời đúng câu hỏi nghiệp vụ.
-   - Mô hình AI đưa ra dự đoán cho từng giao dịch.
-   - Airflow hiển thị các DAGs chạy thành công.
+### 6.1. Unit Tests
+
+```bash
+# Test Bronze streaming job
+docker exec bronze-streaming pytest /app/tests/test_streaming.py
+
+# Test Silver transformation
+docker exec spark-master spark-submit --py-files /app/tests/test_silver.py
+
+# Test Gold dimensional model
+docker exec spark-master spark-submit --py-files /app/tests/test_gold.py
+```
+
+### 6.2. Integration Tests
+
+```bash
+# End-to-end data flow
+1. Insert test transaction → PostgreSQL
+2. Verify CDC event → Kafka UI
+3. Check Bronze Delta → MinIO
+4. Trigger Silver job → Airflow
+5. Verify features → Trino query
+6. Trigger Gold job → Airflow
+7. Verify star schema → Metabase
+```
+
+### 6.3. Performance Tests
+
+```bash
+# Throughput test
+docker exec data-producer python producer.py --bulk-load 100000
+# Measure: Time to process 100K records
+
+# Query performance
+docker exec trino trino --server localhost:8081 --execute "
+  SELECT COUNT(*) FROM delta.gold.fact_transactions
+  WHERE transaction_timestamp > current_timestamp - INTERVAL '1' HOUR
+"
+# Target: < 5 seconds
+```
+
+---
+
+## 7. KNOWN LIMITATIONS & FUTURE WORK
+
+### 7.1. Current Limitations
+
+1. **Single-node Spark**: Không scale horizontally
+2. **No real-time ML inference**: Prediction qua API chưa implement
+3. **Chatbot missing**: LangChain query interface chưa có
+4. **No alerting**: Fraud alerts chưa tự động
+5. **Limited data retention**: Kafka 7 days, Delta vacuum 30 days
+
+### 7.2. Future Enhancements
+
+1. **Multi-node Spark cluster** (Kubernetes)
+2. **Real-time scoring** (FastAPI + MLflow model serving)
+3. **Chatbot** (Streamlit + LangChain + Trino)
+4. **Alert system** (Kafka Connect + Email/Slack)
+5. **Advanced ML** (Deep Learning, AutoML)
+6. **Data quality** (Great Expectations)
+7. **CI/CD pipeline** (GitHub Actions)
+
+---
+
+## 8. REFERENCES
+
+### 8.1. Documentation
+
+- Delta Lake: https://docs.delta.io/
+- Apache Spark: https://spark.apache.org/docs/
+- Trino: https://trino.io/docs/
+- Apache Airflow: https://airflow.apache.org/docs/
+- MLflow: https://mlflow.org/docs/
+
+### 8.2. Dataset
+
+- Sparkov Dataset: https://www.kaggle.com/datasets/kartik2112/fraud-detection
+- Kaggle Notebook: https://www.kaggle.com/code/kartik2112/fraud-detection
+
+### 8.3. Project Repository
+
+- GitHub: https://github.com/bin-bard/real-time-fraud-detection-lakehouse
+- Documentation: `docs/` folder
+- Issues: GitHub Issues tracker
+
+---
+
+**Document Version:** 6.0  
+**Last Updated:** December 4, 2025  
+**Status:** ✅ Production Ready
