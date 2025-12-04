@@ -240,14 +240,17 @@ Log thành công:
 **4. Trino Query (verify end-to-end):**
 
 ```bash
-docker exec -it trino trino
+docker exec -it trino trino --server localhost:8081
 ```
 
-````sql
+```sql
 -- Kiểm tra số lượng records
 SELECT COUNT(*) FROM hive.bronze.transactions;
 SELECT COUNT(*) FROM hive.silver.transactions;
 SELECT COUNT(*) FROM hive.gold.fact_transactions;
+
+-- Exit
+quit;
 
 -- Exit
 quit;
@@ -367,13 +370,15 @@ http://localhost:8081 → lakehouse_pipeline_taskflow → run_gold_transformatio
 
 ```sql
 -- Verify trong Trino
-docker exec -it trino trino
+docker exec -it trino trino --server localhost:8081
 
 SHOW SCHEMAS FROM hive;
 -- Output: bronze, silver, gold
 
 SHOW TABLES FROM hive.gold;
 -- Output: dim_customer, dim_merchant, dim_time, dim_location, fact_transactions
+
+quit;
 ```
 
 ---

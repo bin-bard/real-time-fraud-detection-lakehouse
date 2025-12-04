@@ -168,10 +168,15 @@ def lakehouse_pipeline():
             raise
 
     @task(execution_timeout=timedelta(minutes=10))
-    def register_tables_to_hive(gold_result: dict) -> dict:
+    def register_tables_to_hive(gold_result: dict = None) -> dict:
         """Register Delta tables to Hive Metastore for Trino querying"""
         logger.info("🗂️ Registering Delta tables to Hive Metastore...")
-        logger.info(f"Tables to register: {gold_result.get('tables_created', [])}")
+        
+        # Handle None result from upstream task
+        if gold_result:
+            logger.info(f"Gold tables created: {gold_result.get('tables_created', 'unknown')}")
+        else:
+            logger.warning("⚠️ Gold result is None, will attempt to register all existing tables")
         
         try:
             # Run Hive registration script via docker exec
