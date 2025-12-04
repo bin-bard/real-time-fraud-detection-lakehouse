@@ -391,6 +391,7 @@ services:
       - AIRFLOW_UID=50000
       - AIRFLOW_GID=0
       - _PIP_ADDITIONAL_REQUIREMENTS=
+      - DOCKER_HOST=unix:///var/run/docker.sock
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
@@ -401,9 +402,6 @@ services:
       - "8081:8080"
     command: >
       bash -c "
-      apt-get update && apt-get install -y curl &&
-      curl -L https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-linux-x86_64 -o /usr/local/bin/docker-compose &&
-      chmod +x /usr/local/bin/docker-compose &&
       airflow db init &&
       airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com || true &&
       airflow webserver
@@ -428,19 +426,14 @@ services:
       - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=False
       - AIRFLOW_UID=50000
       - AIRFLOW_GID=0
+      - DOCKER_HOST=unix:///var/run/docker.sock
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
       - ./airflow/plugins:/opt/airflow/plugins
       - /var/run/docker.sock:/var/run/docker.sock
       - .:/workspace
-    command: >
-      bash -c "
-      apt-get update && apt-get install -y curl &&
-      curl -L https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-linux-x86_64 -o /usr/local/bin/docker-compose &&
-      chmod +x /usr/local/bin/docker-compose &&
-      airflow scheduler
-      "
+    command: scheduler
     networks:
       - data_network
     restart: unless-stopped

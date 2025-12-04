@@ -74,11 +74,10 @@ def lakehouse_pipeline():
         logger.info(f"⏰ Silver job started at: {datetime.now()}")
         
         try:
-            # Run silver job via docker-compose exec
+            # Run silver job via docker exec
             result = subprocess.run(
                 [
-                    'docker-compose', '-f', '/workspace/docker-compose.yml',
-                    'exec', '-T', 'spark-master',
+                    'docker', 'exec', 'spark-master',
                     '/opt/spark/bin/spark-submit',
                     '--master', 'spark://spark-master:7077',
                     '--conf', 'spark.cores.max=2',
@@ -131,11 +130,10 @@ def lakehouse_pipeline():
         logger.info(f"Silver processed {silver_result.get('records_processed', 0)} records")
         
         try:
-            # Run gold job via docker-compose exec
+            # Run gold job via docker exec
             result = subprocess.run(
                 [
-                    'docker-compose', '-f', '/workspace/docker-compose.yml',
-                    'exec', '-T', 'spark-master',
+                    'docker', 'exec', 'spark-master',
                     '/opt/spark/bin/spark-submit',
                     '--master', 'spark://spark-master:7077',
                     '--conf', 'spark.cores.max=2',
@@ -177,11 +175,10 @@ def lakehouse_pipeline():
         logger.info(f"Tables to register: {gold_result.get('tables_created', [])}")
         
         try:
-            # Run Hive registration script via docker-compose exec
+            # Run Hive registration script via docker exec
             result = subprocess.run(
                 [
-                    'docker-compose', '-f', '/workspace/docker-compose.yml',
-                    'exec', '-T', 'spark-master',
+                    'docker', 'exec', 'spark-master',
                     '/opt/spark/bin/spark-submit',
                     '--master', 'spark://spark-master:7077',
                     '--conf', 'spark.cores.max=1',
