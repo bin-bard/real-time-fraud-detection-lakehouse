@@ -618,34 +618,43 @@ def main():
                     
                     full_prompt = f"{system_instruction}\n\nCâu hỏi: {prompt}"
                     
-                    # Capture agent output
+                    # Tạo expander và placeholder cho thinking process TRƯỚC khi chạy agent
+                    thinking_expander = st.expander("🧠 AI Thinking Process (Click để xem)", expanded=False)
+                    thinking_placeholder = thinking_expander.empty()
+                    
+                    # Custom stdout để stream thinking process
                     import io
                     import sys
                     import re
                     
-                    # Redirect stdout để capture verbose output
+                    class StreamingStdout:
+                        def __init__(self, placeholder):
+                            self.placeholder = placeholder
+                            self.buffer = ""
+                            self.ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+                        
+                        def write(self, text):
+                            if text:
+                                self.buffer += text
+                                # Strip ANSI và update UI real-time
+                                clean_text = self.ansi_escape.sub('', self.buffer)
+                                self.placeholder.code(clean_text, language="text")
+                        
+                        def flush(self):
+                            pass
+                    
+                    # Redirect stdout để capture và stream verbose output
                     old_stdout = sys.stdout
-                    sys.stdout = captured_output = io.StringIO()
+                    streaming_stdout = StreamingStdout(thinking_placeholder)
+                    sys.stdout = streaming_stdout
                     
                     try:
-                        # Run agent với prompt đầy đủ
+                        # Run agent với prompt đầy đủ - thinking process sẽ hiện real-time
                         response = agent.invoke({"input": full_prompt})
-                        
-                        # Get captured output
-                        thinking_text = captured_output.getvalue()
-                        
-                        # Strip ANSI color codes
-                        ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-                        thinking_text = ansi_escape.sub('', thinking_text)
                         
                     finally:
                         # Restore stdout
                         sys.stdout = old_stdout
-                    
-                    # Hiển thị thinking process trong expander sau khi có kết quả
-                    if thinking_text:
-                        with st.expander("🧠 AI Thinking Process (Click để xem)", expanded=False):
-                            st.code(thinking_text, language="text")
                     
                     # Extract answer and SQL
                     answer = response.get("output", "Xin lỗi, tôi không hiểu câu hỏi.")
