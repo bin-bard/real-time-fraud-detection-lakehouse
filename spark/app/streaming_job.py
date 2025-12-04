@@ -85,6 +85,7 @@ transaction_df = parsed_df \
                 when(col("trans_timestamp").isNotNull(), month(col("trans_timestamp"))).otherwise(lit(None))) \
     .withColumn("day", 
                 when(col("trans_timestamp").isNotNull(), dayofmonth(col("trans_timestamp"))).otherwise(lit(None))) \
+    .withColumn("amt", col("amt").cast("double")) \
     .withColumn("cc_num", col("cc_num").cast("long")) \
     .withColumn("zip", col("zip").cast("int")) \
     .withColumn("city_pop", col("city_pop").cast("long")) \

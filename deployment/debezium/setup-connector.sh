@@ -33,7 +33,8 @@ curl -X POST -H "Content-Type: application/json" \
       "table.include.list": "public.transactions",
       "plugin.name": "pgoutput",
       "publication.autocreate.mode": "filtered",
-      "topic.prefix": "postgres"
+      "topic.prefix": "postgres",
+      "decimal.handling.mode": "double"
     }
   }' \
   http://debezium:8083/connectors
