@@ -1,8 +1,12 @@
 # --- Secrets & Environment Variables ---
 # TUYỆT ĐỐI KHÔNG COMMIT CÁC FILE NÀY! Chúng chứa thông tin nhạy cảm.
 .env
-.env.*
+.env.local
+.env.*.local
 secrets.yml
+
+# NHƯNG cho phép .env.example (template)
+!.env.example
 
 # --- Python Artifacts ---
 # Bỏ qua các thư mục cache, bytecode, và virtual environments
