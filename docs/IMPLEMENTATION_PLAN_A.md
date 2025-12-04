@@ -20,8 +20,17 @@ PostgreSQL → Debezium CDC → Kafka
                               ↓
                     Gold Batch (5 phút/lần)
                               ↓
-                    Trino Query → Metabase/Chatbot
+                    ├─→ Hive Metastore (Metadata cache - optional)
+                    └─→ Trino Delta Catalog (Query data)
+                              ↓
+                    Metabase/Chatbot (jdbc:trino://trino:8081/delta)
 ```
+
+**Lưu ý:**
+
+- **Hive Metastore**: Metadata cache (giúp `SHOW TABLES` nhanh ~100ms)
+- **Delta catalog**: Query engine (đọc trực tiếp từ `_delta_log/` + MinIO)
+- **Metabase/Chatbot**: Kết nối Delta catalog (KHÔNG dùng Hive catalog để query)
 
 ## 🚀 Cải tiến đã thực hiện
 

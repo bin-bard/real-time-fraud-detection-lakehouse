@@ -266,8 +266,14 @@ _Lợi ích Star Schema:_
 ### 3.6. Layer 6: Query & Consumption (Truy vấn & Sử dụng)
 
 - **Trino (PrestoSQL):** Engine truy vấn SQL phân tán tốc độ cao.
-- **Metabase:** Dashboard giám sát.
-- **Chatbot (Streamlit + LangChain):** Công cụ xác minh nghiệp vụ.
+  - **Delta Catalog**: Query data trực tiếp từ Delta Lake (`delta.bronze.*`, `delta.silver.*`, `delta.gold.*`)
+  - **Hive Catalog**: Metadata cache (optional) - chỉ dùng `SHOW TABLES`, KHÔNG query data
+- **Hive Metastore 3.1.3:** Metadata cache layer (optional optimization).
+  - Vai trò: Tăng tốc `SHOW TABLES/SCHEMAS` (~100ms thay vì ~1-2s scan S3)
+  - Không tham gia query data (Delta connector đọc trực tiếp từ `_delta_log/` + MinIO)
+  - Có thể bỏ: Delta tự discover tables, nhưng chậm hơn
+- **Metabase:** Dashboard giám sát (kết nối Delta catalog).
+- **Chatbot (Streamlit + LangChain):** Công cụ xác minh nghiệp vụ (query qua Delta catalog).
 
 ---
 

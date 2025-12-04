@@ -7,18 +7,33 @@
 ## 📋 Tổng Quan
 
 ### Mục Tiêu
-Setup Trino để Metabase có thể query Delta Lake tables thông qua Hive Metastore.
+
+Setup Trino để Metabase có thể query Delta Lake tables. **Hive Metastore là metadata cache (optional)**.
+
+### ⚠️ LƯU Ý QUAN TRỌNG
+
+- **Hive Metastore**: CHỈ là metadata cache (giúp `SHOW TABLES` nhanh)
+- **Delta catalog**: PHẢI dùng để query data (`delta.bronze.*`, `delta.silver.*`, `delta.gold.*`)
+- **Hive catalog**: CHỈ list tables, KHÔNG query được Delta format
 
 ### Kiến Trúc Cuối Cùng
+
 ```
 Metabase (Visualization)
-    ↓ SQL Queries
+    ↓ SQL Queries (jdbc:trino://trino:8081/delta)
 Trino (Query Engine - port 8081)
-    ↓ Delta Catalog
-Hive Metastore (Metadata Store - port 9083)
-    ↓ S3A FileSystem
+    ├─→ Delta Catalog (Query data: đọc _delta_log/ + S3)
+    └─→ Hive Catalog (List metadata: SHOW TABLES nhanh)
+            ↓
+Hive Metastore (Metadata Cache - port 9083) ← OPTIONAL!
+    ↓ PostgreSQL
+metastore-db (Schema info)
+
 MinIO (Object Storage - port 9000)
-    └── Delta Lake Files (bronze/silver/gold)
+    └── Delta Lake Files (_delta_log/ + Parquet)
+        ├── bronze/
+        ├── silver/
+        └── gold/
 ```
 
 ---
@@ -26,6 +41,7 @@ MinIO (Object Storage - port 9000)
 ## ⚠️ Vấn Đề #1: Hive Metastore Schema Conflicts
 
 ### Triệu Chứng
+
 ```
 ERROR: relation "BUCKETING_COLS" already exists
 FATAL: database system is corrupted
@@ -34,6 +50,7 @@ FATAL: database system is corrupted
 Mỗi lần restart container, Hive Metastore crash do conflict schema trong PostgreSQL.
 
 ### Nguyên Nhân
+
 - **Volume persistence**: PostgreSQL data được persist qua `metastore_db` volume
 - Khi Hive Metastore restart → cố init schema lại → schema đã tồn tại → crash
 - `initSchema=true` + existing schema = conflict
@@ -47,10 +64,10 @@ Mỗi lần restart container, Hive Metastore crash do conflict schema trong Pos
 metastore-db:
   image: postgres:14
   volumes:
-    - metastore_db:/var/lib/postgresql/data  # ← XÓA DÒNG NÀY
+    - metastore_db:/var/lib/postgresql/data # ← XÓA DÒNG NÀY
 
 volumes:
-  metastore_db:  # ← XÓA VOLUME DEFINITION
+  metastore_db: # ← XÓA VOLUME DEFINITION
 ```
 
 ```yaml
@@ -65,6 +82,7 @@ metastore-db:
 ```
 
 **Kết Quả:**
+
 - Fresh PostgreSQL DB mỗi lần restart
 - Hive Metastore auto-init schema thành công
 - Không còn conflict errors
@@ -75,12 +93,14 @@ metastore-db:
 ## ⚠️ Vấn Đề #2: Hadoop Version Mismatch
 
 ### Triệu Chứng
+
 ```
 java.lang.ClassNotFoundException: org.apache.hadoop.fs.s3a.S3AFileSystem
 java.lang.NoSuchMethodError: org.apache.hadoop.fs.statistics.IOStatisticsSource.getIOStatistics()
 ```
 
 ### Nguyên Nhân
+
 - **Hive 3.1.3** sử dụng **Hadoop 3.1.0** internally
 - Custom JARs dùng **Hadoop 3.3.4** → version conflict
 - Methods không tương thích giữa Hadoop 3.1.0 vs 3.3.4
@@ -113,6 +133,7 @@ COPY core-site.xml /opt/hadoop/etc/hadoop/core-site.xml
 ```
 
 **Kết Quả:**
+
 - Không còn ClassNotFoundException
 - S3AFileSystem load thành công
 - Compatible với Hive 3.1.3
@@ -122,12 +143,14 @@ COPY core-site.xml /opt/hadoop/etc/hadoop/core-site.xml
 ## ⚠️ Vấn Đề #3: MinIO Credential Mismatch
 
 ### Triệu Chứng
+
 ```
 Status Code: 403, AWS Service: Amazon S3, AWS Request ID: null
 AWS Error Code: null, AWS Error Message: Forbidden
 ```
 
 ### Nguyên Nhân
+
 - MinIO service dùng credentials: `minio` / `minio123`
 - Hive Metastore config dùng credentials: `minioadmin` / `minioadmin`
 - → 403 Forbidden khi access S3
@@ -172,6 +195,7 @@ AWS Error Code: null, AWS Error Message: Forbidden
 ```
 
 **Kết Quả:**
+
 - Hive Metastore connect MinIO thành công
 - `CREATE SCHEMA` và `CREATE TABLE` hoạt động
 - Trino query Delta Lake qua Hive Metastore
@@ -181,6 +205,7 @@ AWS Error Code: null, AWS Error Message: Forbidden
 ## ⚠️ Vấn Đề #4: MSCK REPAIR TABLE Incompatible
 
 ### Triệu Chứng
+
 ```
 ERROR: Failed to register bronze.transactions: MSCK REPAIR TABLE is not supported for v2 tables
 ERROR: Failed to register gold.dim_customer: MSCK REPAIR TABLE is not supported for v2 tables
@@ -189,6 +214,7 @@ ERROR: Failed to register gold.dim_customer: MSCK REPAIR TABLE is not supported 
 Chỉ 2/7 tables được register thành công (dim_location, fact_transactions).
 
 ### Nguyên Nhân
+
 - **Delta Lake v2** sử dụng format mới với transaction log (`_delta_log/`)
 - `MSCK REPAIR TABLE` là Hive command cho format cũ (Parquet partitioned)
 - Delta Lake tự động quản lý partitions → không cần MSCK
@@ -207,11 +233,13 @@ spark.sql(f"MSCK REPAIR TABLE {database}.{table_name}")
 ```
 
 **Lý Do:**
+
 - Delta Lake tự động update partition metadata trong `_delta_log/`
 - Trino đọc metadata trực tiếp từ Delta transaction log
 - CREATE EXTERNAL TABLE đã đủ để register
 
 **Kết Quả:**
+
 - ✅ 7/7 tables registered thành công
 - ✅ Bronze: transactions (25K records)
 - ✅ Silver: transactions (25K records)
@@ -222,12 +250,14 @@ spark.sql(f"MSCK REPAIR TABLE {database}.{table_name}")
 ## ⚠️ Vấn Đề #5: Hive Metastore Connection Refused
 
 ### Triệu Chứng
+
 ```
 org.apache.thrift.transport.TTransportException: java.net.ConnectException: Connection refused
 WARN metastore: Failed to connect to the MetaStore Server...
 ```
 
 ### Nguyên Nhân
+
 - Spark job start quá nhanh trước khi Hive Metastore ready
 - Thrift server chưa listen trên port 9083
 
@@ -268,6 +298,7 @@ hive-registration:
 ```
 
 **Kết Quả:**
+
 - Registration job đợi Metastore ready
 - Không còn connection refused errors
 - Auto-retry thành công sau 10-15 giây
@@ -277,6 +308,7 @@ hive-registration:
 ## ⚠️ Vấn Đề #6: Trino Port Confusion
 
 ### Triệu Chứng
+
 ```
 java.net.ConnectException: Failed to connect to localhost/[0:0:0:0:0:0:0:1]:8080
 ```
@@ -284,6 +316,7 @@ java.net.ConnectException: Failed to connect to localhost/[0:0:0:0:0:0:0:1]:8080
 Metabase không connect được Trino.
 
 ### Nguyên Nhân
+
 - Trino internal port: **8081** (HTTP coordinator)
 - Trino external port: **8085** (mapped to host)
 - Default `trino` CLI tool dùng port 8080 → sai
@@ -304,8 +337,8 @@ trino --server localhost:8085 --execute "SHOW TABLES FROM delta.gold"
 
 ```yaml
 Database Type: Trino
-Host: trino              # ← Docker service name
-Port: 8081               # ← Internal port
+Host: trino # ← Docker service name
+Port: 8081 # ← Internal port
 Catalog: delta
 Database: gold
 ```
@@ -314,10 +347,11 @@ Database: gold
 
 ```yaml
 Host: localhost
-Port: 8085               # ← External mapped port
+Port: 8085 # ← External mapped port
 ```
 
 **Kết Quả:**
+
 - Metabase connect Trino thành công
 - Query all 7 tables từ bronze/silver/gold
 - Dashboards hoạt động bình thường
@@ -327,6 +361,7 @@ Port: 8085               # ← External mapped port
 ## 📊 Verification Checklist
 
 ### 1. Hive Metastore Health
+
 ```bash
 docker logs hive-metastore --tail 30
 
@@ -337,6 +372,7 @@ docker logs hive-metastore --tail 30
 ```
 
 ### 2. Hive Registration Status
+
 ```bash
 docker logs hive-registration --tail 50
 
@@ -352,6 +388,7 @@ docker logs hive-registration --tail 50
 ```
 
 ### 3. Trino Connectivity
+
 ```bash
 # Test Trino CLI
 docker exec trino trino --server localhost:8081 --execute "SHOW CATALOGS"
@@ -382,21 +419,22 @@ docker exec trino trino --server localhost:8081 --execute "SHOW TABLES FROM delt
 ```
 
 ### 4. Query Sample Data
+
 ```bash
 docker exec trino trino --server localhost:8081 --execute "
-SELECT 
-    'bronze.transactions' as table_name, 
-    COUNT(*) as records 
+SELECT
+    'bronze.transactions' as table_name,
+    COUNT(*) as records
 FROM delta.bronze.transactions
 UNION ALL
-SELECT 
-    'silver.transactions', 
-    COUNT(*) 
+SELECT
+    'silver.transactions',
+    COUNT(*)
 FROM delta.silver.transactions
 UNION ALL
-SELECT 
-    'gold.fact_transactions', 
-    COUNT(*) 
+SELECT
+    'gold.fact_transactions',
+    COUNT(*)
 FROM delta.gold.fact_transactions
 "
 
@@ -411,6 +449,7 @@ FROM delta.gold.fact_transactions
 ## 🔧 Final Working Configuration
 
 ### Hive Metastore
+
 - **Image**: Custom from `apache/hive:3.1.3`
 - **JARs**: Hadoop 3.1.0 + AWS SDK 1.11.375
 - **Database**: PostgreSQL (no persistence)
@@ -418,21 +457,24 @@ FROM delta.gold.fact_transactions
 - **Config**: `core-site.xml` with S3A settings
 
 ### Trino
+
 - **Image**: `trinodb/trino:latest`
-- **Catalogs**: 
+- **Catalogs**:
   - `delta` (Delta Lake via Hive Metastore)
   - `hive` (backup option)
-- **Ports**: 
+- **Ports**:
   - Internal: 8081
   - External: 8085
 
 ### Registration Service
+
 - **Script**: `spark/app/register_tables_to_hive.py`
 - **Schedule**: Every 1 hour
 - **Tables**: 7 tables (1 bronze + 1 silver + 5 gold)
 - **Mode**: PySpark with Hive support
 
 ### MinIO
+
 - **Credentials**: `minio` / `minio123`
 - **Endpoint**: `http://minio:9000`
 - **Bucket**: `lakehouse`
@@ -443,22 +485,27 @@ FROM delta.gold.fact_transactions
 ## 🎯 Key Learnings
 
 ### 1. Volume Persistence
+
 ❌ **Không nên** persist Metastore DB khi dùng `initSchema=true`  
 ✅ **Nên** để fresh DB + auto re-register tables
 
 ### 2. Version Compatibility
+
 ❌ Hive 3.1.3 + Hadoop 3.3.4 = NoSuchMethodError  
 ✅ Hive 3.1.3 + Hadoop 3.1.0 = Compatible
 
 ### 3. Delta Lake Format
+
 ❌ MSCK REPAIR TABLE cho Delta v2 = Not supported  
 ✅ CREATE EXTERNAL TABLE USING DELTA = Đủ rồi
 
 ### 4. Credential Consistency
+
 ❌ MinIO credentials khác core-site.xml = 403 Forbidden  
 ✅ Credentials match everywhere = Success
 
 ### 5. Port Configuration
+
 ❌ Trino default port 8080 = Connection refused  
 ✅ Trino actual port 8081 (internal) / 8085 (external) = Working
 
@@ -474,6 +521,7 @@ FROM delta.gold.fact_transactions
 ## 💡 Quick Fixes
 
 ### Reset Everything
+
 ```bash
 # Stop all services
 docker-compose down
@@ -489,6 +537,7 @@ docker logs -f hive-registration
 ```
 
 ### Force Re-registration
+
 ```bash
 # Restart registration service
 docker-compose restart hive-registration
@@ -498,6 +547,7 @@ docker logs -f hive-registration
 ```
 
 ### Check Service Health
+
 ```bash
 # All services status
 docker-compose ps

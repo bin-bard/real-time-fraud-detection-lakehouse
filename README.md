@@ -16,19 +16,19 @@ Dự án xây dựng pipeline xử lý dữ liệu end-to-end:
 
 ## Tech Stack
 
-| Component         | Technology               | Mô tả                          |
-| ----------------- | ------------------------ | ------------------------------ |
-| **Source DB**     | PostgreSQL 14            | OLTP database với CDC enabled  |
-| **CDC**           | Debezium 2.5             | Change Data Capture connector  |
-| **Streaming**     | Apache Kafka             | Message broker                 |
-| **Processing**    | Apache Spark 3.4.1       | Stream & batch processing      |
-| **Storage**       | Delta Lake 2.4.0 + MinIO | ACID transactions, time travel |
-| **Metastore**     | Hive Metastore           | Table metadata management      |
-| **Query Engine**  | Trino                    | Distributed SQL query engine   |
-| **Visualization** | Metabase                 | BI dashboards & analytics      |
-| **ML**            | Scikit-learn, MLflow     | Model training & registry      |
-| **API**           | FastAPI                  | Real-time prediction service   |
-| **Orchestration** | Apache Airflow           | Workflow scheduling            |
+| Component         | Technology               | Mô tả                                       |
+| ----------------- | ------------------------ | ------------------------------------------- |
+| **Source DB**     | PostgreSQL 14            | OLTP database với CDC enabled               |
+| **CDC**           | Debezium 2.5             | Change Data Capture connector               |
+| **Streaming**     | Apache Kafka             | Message broker                              |
+| **Processing**    | Apache Spark 3.4.1       | Stream & batch processing                   |
+| **Storage**       | Delta Lake 2.4.0 + MinIO | ACID transactions, time travel              |
+| **Metastore**     | Hive Metastore 3.1.3     | Metadata cache for Delta catalog (optional) |
+| **Query Engine**  | Trino (Delta connector)  | Distributed SQL query engine                |
+| **Visualization** | Metabase                 | BI dashboards & analytics                   |
+| **ML**            | Scikit-learn, MLflow     | Model training & registry                   |
+| **API**           | FastAPI                  | Real-time prediction service                |
+| **Orchestration** | Apache Airflow           | Workflow scheduling                         |
 
 ## Cấu trúc thư mục
 
@@ -113,8 +113,10 @@ Bronze Delta Lake (s3a://lakehouse/bronze/)
 Silver Delta Lake (s3a://lakehouse/silver/)
     ↓ Gold Batch (Every 5 minutes, 0% CPU during sleep)
 Gold Delta Lake (s3a://lakehouse/gold/) - 5 tables
-    ↓ Trino Delta Catalog (Direct access, no Hive Metastore)
-Query Layer (Trino + Metabase)
+    ↓
+    ├─→ Hive Metastore (Metadata cache: SHOW TABLES nhanh)
+    └─→ Trino Delta Catalog (Query data: đọc từ _delta_log/ + S3)
+Query Layer (Metabase/DBeaver via Delta catalog)
 ```
 
 **Lợi ích:**
@@ -127,12 +129,19 @@ Query Layer (Trino + Metabase)
 
 ### Delta Lake Integration
 
-**Không sử dụng Hive Metastore** - Delta Lake tự quản lý metadata qua `_delta_log/`:
+Delta Lake tự quản lý metadata qua `_delta_log/`, **Hive Metastore chỉ là metadata cache** (optional):
 
-- ✅ ACID transactions
-- ✅ Time travel (Delta Lake history)
-- ✅ Schema evolution với `overwriteSchema=true`
-- ✅ Trino query trực tiếp qua Delta catalog
+- ✅ **ACID transactions**: Delta Lake đảm bảo consistency
+- ✅ **Time travel**: Lịch sử thay đổi trong `_delta_log/`
+- ✅ **Schema evolution**: Tự động với `overwriteSchema=true`
+- ✅ **Query engine**: Trino Delta connector đọc trực tiếp từ S3 + `_delta_log/`
+- 🔄 **Hive Metastore**: Cache metadata để `SHOW TABLES` nhanh hơn (~100ms vs ~1-2s)
+
+**Lưu ý quan trọng:**
+
+- 📊 **Query data**: Dùng Delta catalog (`delta.bronze.*`, `delta.silver.*`, `delta.gold.*`)
+- 📋 **List tables**: Có thể dùng Hive catalog (`hive.*`) nhưng KHÔNG query được
+- ⚡ **Performance**: Hive cache giúp discovery operations nhanh hơn 10-20 lần
 
 ## Hướng dẫn chạy
 
@@ -365,30 +374,50 @@ http://localhost:8081 → lakehouse_pipeline_taskflow → run_silver_transformat
 http://localhost:8081 → lakehouse_pipeline_taskflow → run_gold_transformation → Logs
 ```
 
-#### Hive Metastore Registration
+#### Hive Metastore Registration (Optional Metadata Cache)
+
+**Vai trò**: Hive Metastore là **metadata cache layer** giúp `SHOW TABLES` nhanh hơn.
 
 **Mode:** Auto-registration via Airflow  
 **Trigger:** Sau khi Gold job hoàn thành  
 **Tables registered:** 7 tables (Bronze, Silver, Gold)
 
-**⚠️ IMPORTANT:** Hive catalog chỉ để list tables. **Query phải dùng Delta catalog!**
+**⚠️ QUAN TRỌNG - Hiểu đúng vai trò:**
+
+- ✅ **Hive catalog** (`hive.*`): List metadata (SHOW TABLES) - nhanh
+- ❌ **Hive catalog**: KHÔNG query được Delta tables (lỗi "Cannot query Delta Lake table")
+- ✅ **Delta catalog** (`delta.*`): Query data thực tế - BẮT BUỘC dùng cho SELECT
+
+**Có thể bỏ Hive Metastore không?**
+
+- CÓ - Delta connector tự discover tables từ S3
+- NHƯNG: `SHOW TABLES` sẽ chậm hơn (scan MinIO mỗi lần)
+- KHUYẾN NGHỊ: Giữ lại để tối ưu performance (đã config sẵn)
 
 ```bash
 docker exec -it trino trino --server localhost:8081
 ```
 
 ```sql
--- List tables (OK với Hive catalog)
-SHOW SCHEMAS FROM hive;
--- Output: bronze, silver, gold
+-- List catalogs và schemas
+SHOW CATALOGS;  -- Expect: delta, hive, system
+SHOW SCHEMAS FROM delta;  -- Expect: bronze, silver, gold
 
-SHOW TABLES FROM hive.gold;
+-- List tables (Cả 2 catalog đều OK)
+SHOW TABLES FROM delta.gold;  -- ✅ Khuyến nghị (consistent)
+SHOW TABLES FROM hive.gold;   -- ✅ OK (từ metadata cache)
 -- Output: dim_customer, dim_merchant, dim_time, dim_location, fact_transactions
 
--- Query data (PHẢI dùng Delta catalog)
+-- ⚠️ QUAN TRỌNG: Query data CHỈ dùng Delta catalog!
+-- Lý do: Hive connector KHÔNG đọc được Delta format
+
+-- ✅ ĐÚNG - Query via Delta catalog
 SELECT COUNT(*) FROM delta.bronze.transactions;
 SELECT COUNT(*) FROM delta.silver.transactions;
 SELECT COUNT(*) FROM delta.gold.fact_transactions;
+
+-- ❌ SAI - Query via Hive catalog (sẽ lỗi!)
+-- SELECT COUNT(*) FROM hive.bronze.transactions;  -- Error: Cannot query Delta Lake table
 
 quit;
 ```
@@ -933,10 +962,31 @@ Metabase Dashboard / Analytics
 ✅ **Schema Evolution**: Support for ancient dates with LEGACY mode
 ✅ **40 Features**: Geographic, demographic, time-based, amount-based
 ✅ **Star Schema**: 4 dimensions + 1 fact table for analytics
-✅ **Trino Query Engine**: Distributed SQL with Hive Metastore integration
- **Auto Registration**: Tables auto-register to Metastore every hour
- **Metabase Ready**: Pre-configured for BI dashboards and visualizations
+✅ **Trino Query Engine**: Delta connector queries directly from `_delta_log/` + MinIO
+✅ **Metadata Cache**: Hive Metastore speeds up `SHOW TABLES` (~100ms vs ~1-2s)
+✅ **Auto Registration**: Tables auto-register to Metastore via Airflow
+✅ **Metabase Ready**: Pre-configured for BI dashboards (Delta catalog)
 ✅ **60% CPU Reduction**: From 300%+ to ~195% by moving to batch processing
+
+### 12. Understanding Hive Metastore Role
+
+**❓ Tại sao cần Hive Metastore nếu Delta Lake tự quản lý metadata?**
+
+| Aspect | Delta Lake (_delta_log/) | Hive Metastore |
+|--------|-------------------------|----------------|
+| **Primary role** | Data storage + transaction logs | Metadata cache |
+| **Query data** | ✅ YES (via Delta connector) | ❌ NO (Hive connector cannot read Delta) |
+| **List tables** | ✅ YES (~1-2s, scan S3) | ✅ YES (~100ms, cache hit) |
+| **SHOW SCHEMAS** | ✅ YES (slow) | ✅ YES (fast) |
+| **Required?** | ✅ MANDATORY | ⚠️ OPTIONAL (performance optimization) |
+
+**🎯 Kết luận:**
+- **Hive Metastore = Metadata cache** (giúp discovery nhanh hơn 10-20x)
+- **Delta connector = Query engine** (đọc trực tiếp từ `_delta_log/` + S3)
+- **Có thể bỏ Hive?** CÓ - nhưng `SHOW TABLES` sẽ chậm hơn
+- **Nên giữ?** NÊN - setup đã tối ưu, không tốn nhiều resources (~300MB RAM)
+
+**📚 Chi tiết:** Xem [`docs/HIVE_METASTORE_ROLE.md`](docs/HIVE_METASTORE_ROLE.md)
 
 ---
 
@@ -951,7 +1001,10 @@ Xem file `docs/PROJECT_SPECIFICATION.md` để hiểu rõ:
 
 ## Additional Documentation
 
-- **[METABASE_SETUP.md](docs/METABASE_SETUP.md)** - Complete Metabase setup guide with 7 sample fraud detection queries
+- **[METABASE_SETUP.md](docs/METABASE_SETUP.md)** - Metabase connection guide (Delta catalog) + 7 sample fraud detection queries
+- **[HIVE_METASTORE_ROLE.md](docs/HIVE_METASTORE_ROLE.md)** - ⭐ **Giải thích vai trò Hive Metastore** (metadata cache vs query engine)
+- **[HIVE_TRINO_FIX.md](docs/HIVE_TRINO_FIX.md)** - Hive Metastore setup fixes + Trino CLI usage
 - **[TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** - Detailed solutions for 6 major issues encountered during setup
 - **[PROJECT_SPECIFICATION.md](docs/PROJECT_SPECIFICATION.md)** - Full architecture specifications and requirements
+- **[IMPLEMENTATION_PLAN_A.md](docs/IMPLEMENTATION_PLAN_A.md)** - Hybrid architecture implementation details
 ```
