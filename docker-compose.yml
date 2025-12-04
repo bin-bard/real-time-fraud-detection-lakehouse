@@ -320,7 +320,7 @@ services:
   # ============================================
   # STREAMING JOBS (Auto-start)
   # ============================================
-  
+
   # Bronze Layer Streaming (Kafka → Delta Lake)
   bronze-streaming:
     build:
@@ -367,7 +367,7 @@ services:
       - bronze-streaming
     environment:
       - SPARK_LOCAL_DIRS=/tmp/spark
-      - RUN_MODE=batch  # Batch mode
+      - RUN_MODE=batch # Batch mode
     volumes:
       - ./spark/app:/app
       - silver_ivy_cache:/home/spark/.ivy2
@@ -386,7 +386,7 @@ services:
       - silver-job
     environment:
       - SPARK_LOCAL_DIRS=/tmp/spark
-      - RUN_MODE=batch  # Batch mode
+      - RUN_MODE=batch # Batch mode
     volumes:
       - ./spark/app:/app
       - gold_ivy_cache:/home/spark/.ivy2
@@ -415,12 +415,93 @@ services:
       - data_network
     restart: unless-stopped
 
+  # ============================================
+  # AIRFLOW SERVICES (Orchestration Layer)
+  # ============================================
+
+  # PostgreSQL for Airflow metadata
+  airflow-db:
+    image: postgres:13
+    container_name: airflow-db
+    environment:
+      POSTGRES_DB: airflow
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+    volumes:
+      - airflow_db:/var/lib/postgresql/data
+    networks:
+      - data_network
+    restart: unless-stopped
+
+  # Airflow Webserver
+  airflow-webserver:
+    image: apache/airflow:2.8.0-python3.9
+    container_name: airflow-webserver
+    depends_on:
+      - airflow-db
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@airflow-db:5432/airflow
+      - AIRFLOW__CORE__FERNET_KEY=81HqDtbqAywKSOumSha3BhWNOdQ26slT6K0YaZeZyPs=
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=True
+      - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=False
+      - AIRFLOW_UID=50000
+      - AIRFLOW_GID=0
+      - _PIP_ADDITIONAL_REQUIREMENTS=
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - /var/run/docker.sock:/var/run/docker.sock # For docker-compose commands
+      - .:/workspace # Mount workspace for docker-compose access
+    ports:
+      - "8081:8080"
+    command: >
+      bash -c "
+      airflow db init &&
+      airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com || true &&
+      airflow webserver
+      "
+    networks:
+      - data_network
+    restart: unless-stopped
+    user: "0:0" # Run as root to access Docker socket
+
+  # Airflow Scheduler
+  airflow-scheduler:
+    image: apache/airflow:2.8.0-python3.9
+    container_name: airflow-scheduler
+    depends_on:
+      - airflow-db
+      - airflow-webserver
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@airflow-db:5432/airflow
+      - AIRFLOW__CORE__FERNET_KEY=81HqDtbqAywKSOumSha3BhWNOdQ26slT6K0YaZeZyPs=
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=False
+      - AIRFLOW_UID=50000
+      - AIRFLOW_GID=0
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .:/workspace
+    command: scheduler
+    networks:
+      - data_network
+    restart: unless-stopped
+    user: "0:0"
+
 volumes:
   postgres_data:
   minio_data:
   # metastore_db:  # Removed - no persistence for metastore DB to avoid schema conflicts
   mlflow_db:
   metabase_db:
+  airflow_db:
   bronze_ivy_cache:
   silver_ivy_cache:
   gold_ivy_cache:
