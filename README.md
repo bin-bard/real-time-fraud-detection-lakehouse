@@ -372,6 +372,45 @@ LIMIT 20;
 > - **Airflow:** Tài khoản mặc định `admin/admin` (đã được tự động tạo khi khởi động).
 > - **Spark UI, Kafka UI, Trino UI:** Không yêu cầu đăng nhập.
 
+#### Kết nối Trino qua DBeaver/SQL Client
+
+Để truy vấn dữ liệu Lakehouse qua SQL client (DBeaver, DataGrip, v.v.):
+
+**Thông tin kết nối:**
+
+- **Driver**: Trino (hoặc Presto)
+- **Host**: `localhost`
+- **Port**: `8085`
+- **Database/Catalog**: `hive`
+- **Schema**: `gold`, `silver`, hoặc `bronze`
+- **Username**: `trino` (hoặc bất kỳ)
+- **Password**: để trống
+- **JDBC URL**: `jdbc:trino://localhost:8085/hive`
+
+**Ví dụ truy vấn:**
+
+```sql
+-- Xem tất cả bảng trong Gold layer
+SHOW TABLES FROM hive.gold;
+
+-- Query fact table
+SELECT * FROM hive.gold.fact_transactions LIMIT 10;
+
+-- Join với dimension tables
+SELECT
+    t.trans_num,
+    c.first_name,
+    c.last_name,
+    m.merchant_name,
+    t.amt,
+    t.is_fraud
+FROM hive.gold.fact_transactions t
+JOIN hive.gold.dim_customer c ON t.customer_key = c.customer_key
+JOIN hive.gold.dim_merchant m ON t.merchant_key = m.merchant_key
+WHERE t.is_fraud = 1
+LIMIT 20;
+```
+
 ---
 
 ### 7. Airflow Workflow Orchestration

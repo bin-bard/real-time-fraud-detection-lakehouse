@@ -46,50 +46,9 @@ def model_retraining_pipeline():
     """
 
     @task
-    def stop_streaming_jobs() -> dict:
-        """Stop Silver and Gold streaming jobs to free up CPU"""
-        logger.info("🛑 Stopping Silver and Gold streaming jobs...")
-        
-        try:
-            subprocess.run(
-                ['docker-compose', '-f', '/workspace/docker-compose.yml', 'stop', 'silver-job', 'gold-job'],
-                check=True,
-                capture_output=True,
-                text=True
-            )
-            logger.info("✅ Streaming jobs stopped successfully")
-            return {"status": "success", "message": "Jobs stopped"}
-        except subprocess.CalledProcessError as e:
-            logger.error(f"❌ Failed to stop jobs: {e.stderr}")
-            return {"status": "failed", "error": str(e)}
-
-    @task
-    def verify_jobs_stopped() -> bool:
-        """Verify streaming jobs are stopped"""
-        logger.info("🔍 Verifying streaming jobs are stopped...")
-        
-        import time
-        time.sleep(10)  # Wait for jobs to fully stop
-        
-        try:
-            result = subprocess.run(
-                ['docker', 'ps', '--filter', 'name=silver-job', '--filter', 'name=gold-job', 
-                 '--format', '{{.Names}}: {{.Status}}'],
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            logger.info(f"Container status: {result.stdout}")
-            logger.info("✅ Verification complete")
-            return True
-        except subprocess.CalledProcessError:
-            logger.warning("⚠️ Could not verify job status")
-            return False
-
-    @task
     def check_data_availability() -> dict:
         """Check if Silver layer has sufficient data for training"""
-        logger.info("📊 Checking data availability in Silver layer...")
+        logger.info("📈 Checking data availability in Silver layer...")
         
         # Simplified check - in production, you'd query Delta table count
         # For now, just check if MinIO/lakehouse is accessible
@@ -109,7 +68,7 @@ def model_retraining_pipeline():
     @task(execution_timeout=timedelta(hours=2))
     def train_ml_models() -> dict:
         """Train ML models (RandomForest, LogisticRegression)"""
-        logger.info("🤖 Starting ML model training...")
+        logger.info("🧠 Starting ML model training...")
         logger.info(f"⏰ Training started at: {datetime.now()}")
         
         try:
@@ -171,40 +130,7 @@ def model_retraining_pipeline():
             return {"status": "error", "models_found": False}
 
     @task
-    def restart_streaming_jobs() -> dict:
-        """Restart Silver and Gold streaming jobs"""
-        logger.info("🔄 Restarting Silver and Gold streaming jobs...")
-        
-        try:
-            # Use docker compose --profile manual to start
-            subprocess.run(
-                ['docker-compose', '-f', '/workspace/docker-compose.yml', '--profile', 'manual', 
-                 'up', '-d', 'silver-job', 'gold-job'],
-                check=True,
-                capture_output=True,
-                text=True
-            )
-            
-            import time
-            time.sleep(15)  # Wait for jobs to start
-            
-            result = subprocess.run(
-                ['docker', 'ps', '--filter', 'name=silver-job', '--filter', 'name=gold-job',
-                 '--format', '{{.Names}}: {{.Status}}'],
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            
-            logger.info(f"Container status: {result.stdout}")
-            logger.info("✅ Streaming jobs restarted successfully")
-            return {"status": "success", "jobs_running": True}
-        except subprocess.CalledProcessError as e:
-            logger.error(f"❌ Failed to restart jobs: {e.stderr}")
-            return {"status": "failed", "jobs_running": False}
-
-    @task
-    def send_notification(training_result: dict, verification_result: dict, restart_result: dict) -> None:
+    def send_notification(training_result: dict, verification_result: dict) -> None:
         """Send success notification with summary"""
         logger.info("=" * 60)
         logger.info("🗂️ MODEL RETRAINING PIPELINE SUMMARY")
@@ -212,22 +138,18 @@ def model_retraining_pipeline():
         logger.info(f"Training Status: {training_result.get('status')}")
         logger.info(f"Models Trained: {training_result.get('models')}")
         logger.info(f"MLflow Verification: {verification_result.get('status')}")
-        logger.info(f"Streaming Jobs Restart: {restart_result.get('status')}")
         logger.info("=" * 60)
         logger.info("✅ Model retraining pipeline completed successfully!")
         logger.info("=" * 60)
 
     # Define task flow
-    stop_result = stop_streaming_jobs()
-    verify_stopped = verify_jobs_stopped()
     data_check = check_data_availability()
     training_result = train_ml_models()
     verification_result = verify_models_registered(training_result)
-    restart_result = restart_streaming_jobs()
-    notification = send_notification(training_result, verification_result, restart_result)
+    notification = send_notification(training_result, verification_result)
     
     # Set dependencies
-    stop_result >> verify_stopped >> data_check >> training_result >> verification_result >> restart_result >> notification
+    data_check >> training_result >> verification_result >> notification
 
 
 # Instantiate the DAG
