@@ -498,6 +498,9 @@ services:
       - postgres
     ports:
       - "8501:8501"
+    volumes:
+      # Mount code để tự động reload khi sửa (không cần rebuild)
+      - ./services/fraud-chatbot/app:/app/app
     environment:
       # Gemini API Key (Lấy từ https://aistudio.google.com/app/apikey)
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}

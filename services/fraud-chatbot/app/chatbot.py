@@ -59,16 +59,12 @@ def get_trino_db():
         echo=False
     )
     
-    # Tạo SQLDatabase
+    # Tạo SQLDatabase - Không dùng include_tables vì Trino reflection có vấn đề
+    # LangChain sẽ tự discover tất cả tables trong schema
     db = SQLDatabase(
         engine,
         sample_rows_in_table_info=0,
-        include_tables=[
-            'fact_transactions', 'dim_customer', 'dim_merchant', 'dim_time', 'dim_date',
-            'daily_summary', 'hourly_summary', 'state_summary', 'category_summary',
-            'amount_summary', 'latest_metrics', 'fraud_patterns', 'merchant_analysis',
-            'time_period_analysis'
-        ]
+        # Bỏ include_tables - để LangChain query information_schema tự động
     )
     return db
 
@@ -97,13 +93,18 @@ def get_llm():
 @st.cache_resource
 def get_sql_agent():
     """Tạo SQL Agent - AI biết query database"""
+    from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
+    
     db = get_trino_db()
     llm = get_llm()
     
+    # Tạo toolkit trước (API mới yêu cầu)
+    toolkit = SQLDatabaseToolkit(db=db, llm=llm)
+    
     agent = create_sql_agent(
         llm=llm,
-        db=db,
-        agent_type="openai-tools",
+        toolkit=toolkit,
+        agent_type="zero-shot-react-description",  # Agent type tương thích với Gemini
         verbose=True,
         handle_parsing_errors=True,
         max_iterations=5,  # Giới hạn số lần thử
