@@ -391,12 +391,61 @@ _Luồng này chạy định kỳ theo lịch, do **Airflow** kích hoạt._
 
 #### **DAG 01: Automated Model Retraining (Tự động huấn luyện lại mô hình)**
 
-- **Lịch chạy:** 00:00 Hàng ngày.
-- **Tasks:**
-  1. **Extract:** Spark đọc dữ liệu lịch sử từ bảng **Silver**.
-  2. **Train:** Huấn luyện lại mô hình (Random Forest/Logistic Regression).
-  3. **Evaluate:** So sánh hiệu quả với mô hình hiện tại.
-  4. **Register:** Nếu tốt hơn -> Đăng ký vào MLflow và cập nhật endpoint cho FastAPI.
+- **Lịch chạy:** 02:00 Hàng ngày (Tránh conflict với streaming jobs).
+- **Chiến lược:** Tạm dừng streaming jobs → Train models → Khởi động lại streaming.
+- **Models:** Random Forest + Logistic Regression (2 models cho thesis explanation simplicity).
+
+**Tasks workflow (7 bước):**
+
+1. **stop_streaming_jobs**: Dừng Silver/Gold streaming để giải phóng CPU/memory
+2. **verify_stopped**: Kiểm tra jobs đã dừng hoàn toàn
+3. **check_data_availability**: Validate Silver layer có đủ dữ liệu (>1000 records)
+4. **train_models**: Huấn luyện 2 models với enhanced logging
+   - **Data Source**: Silver Delta Lake (`s3a://lakehouse/silver/transactions`)
+   - **Data Filtering**: 5 <= amt <= 1250 (loại bỏ extreme values)
+   - **Class Balancing**: Undersample majority class (1:1 ratio như Kaggle)
+   - **Features**: 25+ features (geographic, demographic, time, amount)
+   - **Train/Test Split**: 80/20 với seed=42
+   - **Model Configs**:
+     - RandomForest: 200 trees, maxDepth=30
+     - LogisticRegression: maxIter=1000, no regularization
+   - **Metrics Tracked**: Accuracy, Precision, Recall, Specificity, F1, AUC
+   - **Logging**: [STEP: XXX] prefixes với sys.stdout.flush() cho Airflow visibility
+   - **Data Consistency**: Verify all features exist in Silver layer, warn if missing
+5. **verify_models**: Check MLflow có 2 registered models với metrics
+6. **restart_streaming_jobs**: Khởi động lại Silver/Gold streaming
+7. **send_notification**: Thông báo kết quả training (success/failure)
+
+**MLflow Integration:**
+
+- **Experiment**: `fraud_detection_production`
+- **Registered Models**:
+  - `fraud_detection_randomforest`
+  - `fraud_detection_logisticregression`
+- **Artifacts Storage**: S3/MinIO (`s3a://mlflow/artifacts/`)
+- **Tracked Parameters**: model type, train/test samples, num_features, hyperparameters
+- **Tracked Metrics**: accuracy, precision, recall, specificity, f1_score, auc, training_duration
+- **Confusion Matrix**: TP, TN, FP, FN logged as metrics
+
+**Enhanced Logging cho Airflow:**
+
+ML training job (`ml_training_job.py`) implement `log_step(step_name, message)` function:
+
+- Format: `[STEP: {step_name}] {message}`
+- Flush: `sys.stdout.flush()` sau mỗi log để hiện ngay trên Airflow UI
+- Step types: INIT, DATA_LOAD, DATA_FILTER, FEATURE_PREP, CLASS_BALANCE, DATA_SPLIT, MODEL_CONFIG, TRAINING, EVALUATION, RESULTS, MLFLOW, SUCCESS, ERROR
+
+**Expected Performance (Kaggle benchmark):**
+
+- Accuracy: ~96.8%
+- AUC: ~99.5%
+- Training Duration: 10-20 phút (tùy data size)
+
+**Fault Tolerance:**
+
+- Nếu training fail → Airflow retry 1 lần
+- Nếu vẫn fail → Send alert, giữ nguyên models cũ
+- Streaming jobs luôn được restart (đảm bảo pipeline tiếp tục)
 
 #### **DAG 02: Lakehouse Maintenance (Bảo trì hệ thống)**
 
