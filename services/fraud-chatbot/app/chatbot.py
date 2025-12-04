@@ -379,9 +379,6 @@ def main():
         
         # Get AI response
         with st.chat_message("assistant"):
-            # Container để hiển thị thinking process
-            thinking_container = st.empty()
-            
             with st.spinner("🤔 Đang suy nghĩ..."):
                 try:
                     agent = get_sql_agent()
@@ -396,6 +393,65 @@ def main():
                     - giao dịch = transaction
                     - khách hàng = customer
                     - nhà bán hàng/merchant = merchant
+                    
+                    GIẢI THÍCH CÁC TRƯỜNG DỮ LIỆU QUAN TRỌNG:
+                    
+                    ** AMOUNT BIN (Khoảng giá trị giao dịch) **
+                    - amount_bin: Chia giao dịch theo giá trị (1-5)
+                      * Bin 1: $0 - $50 (giao dịch nhỏ, fraud rate thấp ~0.24%)
+                      * Bin 2: $50 - $150 (fraud rate ~0.52%)
+                      * Bin 3: $150 - $300 (fraud rate ~0.04%)
+                      * Bin 4: $300 - $500 (fraud rate ~1.59%)
+                      * Bin 5: >$500 (giao dịch lớn, fraud rate CAO NHẤT 32.26%)
+                    
+                    ** CATEGORY (Loại giao dịch) **
+                    Có 14 categories, ví dụ:
+                    - shopping_net, shopping_pos
+                    - grocery_net, grocery_pos
+                    - gas_transport
+                    - misc_net, misc_pos
+                    - entertainment, food_dining
+                    - personal_care, health_fitness
+                    - travel, home
+                    
+                    ** TIME PERIOD (Khung giờ) **
+                    - time_period: 8 khung giờ trong ngày
+                      * Early Morning (0-3h): Đêm khuya, nguy cơ cao
+                      * Late Night (3-6h): Rất đêm, nguy cơ cao
+                      * Morning (6-9h): Sáng sớm
+                      * Mid Morning (9-12h): Buổi sáng
+                      * Afternoon (12-15h): Chiều
+                      * Late Afternoon (15-18h): Chiều muộn
+                      * Evening (18-21h): Tối
+                      * Night (21-24h): Đêm
+                    
+                    ** DAY OF WEEK (Ngày trong tuần) **
+                    - transaction_day_of_week hoặc day_of_week:
+                      * 0 = Thứ Hai (Monday)
+                      * 1 = Thứ Ba (Tuesday)
+                      * 2 = Thứ Tư (Wednesday)
+                      * 3 = Thứ Năm (Thursday)
+                      * 4 = Thứ Sáu (Friday)
+                      * 5 = Thứ Bảy (Saturday)
+                      * 6 = Chủ Nhật (Sunday)
+                    
+                    ** BOOLEAN FLAGS (Cờ đánh dấu) **
+                    - is_fraud: 1 = gian lận, 0 = hợp lệ
+                    - is_distant_transaction: 1 = giao dịch xa (>50km từ địa chỉ khách hàng)
+                    - is_late_night: 1 = giao dịch đêm khuya (23h-6h)
+                    - is_weekend_transaction: 1 = cuối tuần (Thứ 7, Chủ Nhật)
+                    - is_high_amount: 1 = giao dịch giá trị cao (>$500)
+                    - is_zero_amount: 1 = giao dịch $0 (đáng ngờ)
+                    
+                    ** DISTANCE (Khoảng cách) **
+                    - distance_km: Khoảng cách từ địa chỉ khách hàng đến merchant
+                      * <10km: Bình thường
+                      * 10-50km: Xa một chút
+                      * >50km: Rất xa, đáng ngờ (is_distant_transaction=1)
+                    
+                    ** AGE (Tuổi) **
+                    - customer_age_at_transaction: Tuổi khách hàng khi giao dịch
+                    - age (trong dim_customer): Tuổi hiện tại của khách hàng
                     
                     === DATABASE SCHEMA (14 tables) ===
                     
@@ -459,7 +515,9 @@ def main():
                       - amount_range, fraud_rate
                       
                     fraud_patterns (5 patterns):
-                      - amount_range, fraud_count, avg_fraud_amount
+                      - amount_bin (1-5, xem GIẢI THÍCH ở trên)
+                      - fraud_count, avg_fraud_amount
+                      → QUAN TRỌNG: Bin 5 (>$500) có fraud_rate 32% - CAO NHẤT!
                       
                     time_period_analysis (8 periods):
                       - time_period (morning/afternoon/...), fraud_rate
@@ -488,18 +546,39 @@ def main():
                     - Ưu tiên dùng views đã tính sẵn (nhanh hơn 10-100x)
                     - Chỉ JOIN fact_transactions khi cần chi tiết cụ thể
                     - Format số đẹp, dễ đọc
+                    
+                    KHI TRẢ LỜI:
+                    - Luôn GIẢI THÍCH ý nghĩa của các bin/code (amount_bin, time_period, etc.)
+                    - Ví dụ: "Bin 5 (giao dịch >$500)" THAY VÌ chỉ "Bin 5"
+                    - Đưa ra INSIGHT cụ thể: "Giao dịch lớn trên $500 có nguy cơ gian lận 32%, cao gấp 10 lần so với giao dịch nhỏ"
+                    - Format số với phần trăm: "32.26%" thay vì "0.3226"
+                    
+                    TẠO BINS ĐỘNG (khi user yêu cầu chia bin khác):
+                    Nếu user muốn chia bin khác (ví dụ: "chia 10 bin", "nhóm thành 8 khoảng"):
+                    - Dùng NTILE() hoặc WIDTH_BUCKET() trong SQL để tạo bins động
+                    - Ví dụ chia transaction_amount thành 10 bins:
+                      ```sql
+                      SELECT 
+                        NTILE(10) OVER (ORDER BY transaction_amount) as amount_bin_10,
+                        MIN(transaction_amount) as min_amount,
+                        MAX(transaction_amount) as max_amount,
+                        COUNT(*) as total_transactions,
+                        SUM(is_fraud) as fraud_transactions,
+                        CAST(SUM(is_fraud) AS DOUBLE) / COUNT(*) as fraud_rate
+                      FROM fact_transactions
+                      GROUP BY NTILE(10) OVER (ORDER BY transaction_amount)
+                      ORDER BY amount_bin_10
+                      ```
+                    - Luôn hiển thị khoảng giá trị (min-max) cho mỗi bin mới
+                    - Giải thích ý nghĩa: "Bin 1 ($0.18-$2.85): giao dịch rất nhỏ, fraud rate 0.1%"
                     """
                     
                     full_prompt = f"{system_instruction}\n\nCâu hỏi: {prompt}"
                     
-                    # Hiển thị thinking process trong expander
-                    with thinking_container:
-                        with st.expander("🧠 AI Thinking Process (Click để xem)", expanded=False):
-                            thinking_placeholder = st.empty()
-                    
                     # Capture agent output
                     import io
                     import sys
+                    import re
                     
                     # Redirect stdout để capture verbose output
                     old_stdout = sys.stdout
@@ -512,12 +591,18 @@ def main():
                         # Get captured output
                         thinking_text = captured_output.getvalue()
                         
-                        # Hiển thị thinking process nếu có
-                        if thinking_text:
-                            thinking_placeholder.code(thinking_text, language="text")
+                        # Strip ANSI color codes
+                        ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+                        thinking_text = ansi_escape.sub('', thinking_text)
+                        
                     finally:
                         # Restore stdout
                         sys.stdout = old_stdout
+                    
+                    # Hiển thị thinking process trong expander sau khi có kết quả
+                    if thinking_text:
+                        with st.expander("🧠 AI Thinking Process (Click để xem)", expanded=False):
+                            st.code(thinking_text, language="text")
                     
                     # Extract answer and SQL
                     answer = response.get("output", "Xin lỗi, tôi không hiểu câu hỏi.")
