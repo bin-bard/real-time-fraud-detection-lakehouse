@@ -144,6 +144,7 @@ def process_bronze_to_silver_batch():
         
         if count == 0:
             logger.info("No new data to process. Exiting...")
+            logger.info(f"✅ Successfully processed 0 records to Silver layer!")
             return
         
         # Data quality checks - Bronze Delta đã có data flatten sẵn
