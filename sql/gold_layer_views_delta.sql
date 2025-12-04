@@ -198,8 +198,8 @@ ORDER BY fraud_count DESC;
 -- ============================================================
 CREATE OR REPLACE VIEW delta.gold.merchant_analysis AS
 SELECT 
-    m.merchant,
-    m.merchant_category,
+    f.merchant,
+    f.transaction_category as merchant_category,
     
     COUNT(*) as total_transactions,
     SUM(CASE WHEN f.is_fraud = 1 THEN 1 ELSE 0 END) as fraud_transactions,
@@ -208,9 +208,7 @@ SELECT
     CAST(SUM(CASE WHEN f.is_fraud = 1 THEN 1 ELSE 0 END) AS DOUBLE) / COUNT(*) as fraud_rate
     
 FROM delta.gold.fact_transactions f
-JOIN delta.gold.dim_merchant m 
-    ON f.merchant_key = m.merchant_key
-GROUP BY m.merchant, m.merchant_category
+GROUP BY f.merchant, f.transaction_category
 HAVING COUNT(*) > 10  -- Filter out low-volume merchants
 ORDER BY fraud_rate DESC
 LIMIT 100;
