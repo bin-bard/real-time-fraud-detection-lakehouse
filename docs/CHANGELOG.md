@@ -1054,6 +1054,62 @@ docker builder prune
 - MinIO: http://localhost:9001
 - **FastAPI Docs: http://localhost:8000/docs**
 
+---
+
+## Q14: Chatbot không hoạt động?
+
+**Triệu chứng:**
+
+- Lỗi "API key not provided"
+- Chatbot không kết nối được Trino
+- Chat history không lưu
+
+**Giải pháp:**
+
+**1. Cấu hình Gemini API Key:**
+
+```bash
+# Tạo file .env nếu chưa có
+cp .env.example .env
+
+# Thêm API key (lấy từ https://aistudio.google.com/app/apikey)
+echo "GOOGLE_API_KEY=AIzaSyXXXXXXXXXXXXXXXXXXXXXXXXXX" >> .env
+```
+
+**2. Kiểm tra logs:**
+
+```bash
+docker logs fraud-chatbot --tail 50
+
+# ✅ Mong đợi:
+# "You can now view your Streamlit app in your browser"
+# "Trino connection successful"
+
+# ⚠️ Nếu thấy:
+# "API key not provided"
+# → Kiểm tra lại .env file
+```
+
+**3. Test kết nối Trino:**
+
+```bash
+# Vào container chatbot
+docker exec -it fraud-chatbot bash
+
+# Test Trino
+python -c "from sqlalchemy import create_engine; engine = create_engine('trino://trino:8081/delta/gold'); print(engine.table_names())"
+```
+
+**4. Restart service:**
+
+```bash
+docker compose restart fraud-chatbot
+```
+
+**5. Access Chatbot:**
+
+- **Chatbot UI: http://localhost:8501**
+
 ### Files Documentation
 
 - `README.md` - Hướng dẫn nhanh

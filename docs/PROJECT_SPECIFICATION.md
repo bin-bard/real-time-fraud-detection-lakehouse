@@ -753,19 +753,17 @@ curl -X POST http://localhost:8000/predict \
 ### 7.1. Hạn chế hiện tại
 
 1. **Single-node Spark**: Không scale horizontally
-2. **Chatbot chưa implement**: LangChain query interface chưa có
-3. **No alerting system**: Fraud alerts chưa tự động
-4. **Limited data retention**: Kafka 7 ngày, Delta vacuum 30 ngày
+2. **No alerting system**: Fraud alerts chưa tự động
+3. **Limited data retention**: Kafka 7 ngày, Delta vacuum 30 ngày
 
 ### 7.2. Cải tiến tương lai
 
 1. **Multi-node Spark cluster** (Kubernetes)
-2. **Chatbot interface** (Streamlit + LangChain + Trino)
-3. **Alert system** (Kafka Connect + Email/Slack)
-4. **Advanced ML** (XGBoost, Deep Learning, AutoML)
-5. **Data quality monitoring** (Great Expectations)
-6. **CI/CD pipeline** (GitHub Actions)
-7. **Grafana monitoring** (Prometheus + Grafana)
+2. **Alert system** (Kafka Connect + Email/Slack)
+3. **Advanced ML** (XGBoost, Deep Learning, AutoML)
+4. **Data quality monitoring** (Great Expectations)
+5. **CI/CD pipeline** (GitHub Actions)
+6. **Grafana monitoring** (Prometheus + Grafana)
 
 ---
 

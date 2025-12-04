@@ -28,6 +28,7 @@ Dự án xây dựng pipeline xử lý dữ liệu end-to-end từ CDC (Change D
 | **Theo dõi ML**   | MLflow 2.8.0         | 5000       | Theo dõi mô hình                  |
 | **Trực quan hóa** | Metabase             | 3000       | Dashboard BI                      |
 | **API**           | FastAPI              | 8000       | Dự đoán thời gian thực (tùy chọn) |
+| **Chatbot**       | Streamlit + Gemini   | 8501       | Chat với database bằng tiếng Việt |
 
 ## 📋 Yêu cầu hệ thống
 
@@ -61,6 +62,39 @@ wsl --shutdown
 ```
 
 ## 🚀 Hướng dẫn chạy
+
+### 0. Cấu hình Gemini API (Tùy chọn - Cho Chatbot)
+
+Nếu bạn muốn sử dụng Chatbot, cần cấu hình Gemini API key (FREE):
+
+**Bước 1: Lấy API Key**
+
+1. Truy cập: https://aistudio.google.com/app/apikey
+2. Đăng nhập Google
+3. Click **"Create API Key"**
+4. Copy API key (dạng: `AIzaSy...`)
+
+**Bước 2: Tạo file `.env`**
+
+```bash
+# Copy file mẫu
+cp .env.example .env
+
+# Sửa file .env
+notepad .env  # Windows
+# hoặc
+nano .env     # Linux/Mac
+```
+
+**Bước 3: Dán API key vào `.env`**
+
+```bash
+GOOGLE_API_KEY=AIzaSyXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+```
+
+**Lưu ý:** Nếu không dùng Chatbot, có thể bỏ qua bước này.
+
+---
 
 ### 1. Tải mã nguồn
 
@@ -172,6 +206,7 @@ quit;
 | **Metabase**        | http://localhost:3000 | (tạo admin lần đầu)      | Dashboard BI                      |
 | **PostgreSQL**      | localhost:5432        | `postgres` / `postgres`  | Cơ sở dữ liệu nguồn               |
 | **FastAPI**         | http://localhost:8000 | -                        | API dự đoán gian lận real-time    |
+| **Chatbot**         | http://localhost:8501 | -                        | Chat với database (Gemini AI)     |
 
 ## 📊 Kiến trúc hệ thống
 
@@ -459,6 +494,116 @@ Sau khi tạo views, query đơn giản hơn:
 SELECT * FROM delta.gold.daily_summary;
 SELECT * FROM delta.gold.merchant_analysis;
 ```
+
+## 🤖 Chatbot - Chat với Database bằng Tiếng Việt
+
+### Giới thiệu
+
+Chatbot sử dụng **Gemini AI** + **LangChain** để chat với database bằng ngôn ngữ tự nhiên.
+
+**Tính năng:**
+
+- ✅ Chat bằng tiếng Việt hoặc tiếng Anh
+- ✅ Tự động sinh SQL query từ câu hỏi
+- ✅ Lưu lịch sử chat vào PostgreSQL
+- ✅ Quản lý nhiều sessions
+- ✅ Hiển thị SQL query được sinh ra
+- ✅ FREE tier (Gemini API miễn phí)
+
+### Truy cập Chatbot
+
+```
+http://localhost:8501
+```
+
+### Câu hỏi mẫu
+
+**Tiếng Việt:**
+
+- "Có bao nhiêu giao dịch gian lận hôm nay?"
+- "Top 5 bang có tỷ lệ gian lận cao nhất?"
+- "Hiển thị fraud rate theo từng giờ trong ngày"
+- "Merchant nào nguy hiểm nhất?"
+- "Tổng số tiền bị gian lận tuần này?"
+- "Phân tích fraud patterns theo khoảng tiền"
+- "Category nào rủi ro nhất?"
+- "Danh sách 10 giao dịch gian lận gần đây"
+
+**Tiếng Anh:**
+
+- "How many fraud transactions today?"
+- "Which states have highest fraud rate?"
+- "Show fraud rate by hour"
+- "Top 10 risky merchants"
+- "Total fraud amount this week"
+- "Fraud patterns by amount range"
+
+### Quản lý Chat History
+
+**Tính năng lưu trữ:**
+
+- Mỗi session được lưu vào PostgreSQL
+- Có thể load lại conversations cũ
+- Xóa sessions không cần thiết
+- Theo dõi số lượng messages mỗi session
+
+**Database schema:**
+
+```sql
+-- Bảng chat_history tự động được tạo
+CREATE TABLE chat_history (
+    id SERIAL PRIMARY KEY,
+    session_id VARCHAR(100),
+    role VARCHAR(20),  -- 'user' or 'assistant'
+    message TEXT,
+    sql_query TEXT,    -- SQL được sinh ra
+    created_at TIMESTAMP
+);
+```
+
+**Load lại conversation:**
+
+1. Mở Chatbot sidebar
+2. Chọn session từ "Sessions gần đây"
+3. Tất cả messages sẽ được load
+
+### Troubleshooting
+
+**Lỗi: "GOOGLE_API_KEY chưa được cấu hình"**
+
+```bash
+# 1. Kiểm tra file .env tồn tại
+ls .env
+
+# 2. Kiểm tra nội dung
+cat .env
+
+# 3. Đảm bảo có dòng:
+GOOGLE_API_KEY=AIzaSy...
+
+# 4. Restart chatbot container
+docker compose restart fraud-chatbot
+```
+
+**Lỗi: "Cannot connect to Trino"**
+
+```bash
+# Kiểm tra Trino đang chạy
+docker ps | grep trino
+
+# Test connection
+docker exec fraud-chatbot python -c "
+from sqlalchemy import create_engine
+engine = create_engine('trino://trino:8081/delta/gold')
+print(engine.table_names())
+"
+```
+
+**Chatbot response chậm?**
+
+- Gemini API FREE tier có rate limit
+- Model `gemini-2.0-flash-exp` là nhanh nhất
+- Có thể đổi sang `gemini-1.5-flash` trong `chatbot.py`
 
 ## 🔧 Kết nối Metabase
 

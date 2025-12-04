@@ -486,6 +486,38 @@ services:
       timeout: 10s
       retries: 3
 
+  # Fraud Detection Chatbot - Gemini + LangChain + Streamlit
+  fraud-chatbot:
+    build: ./services/fraud-chatbot
+    container_name: fraud-chatbot
+    depends_on:
+      - trino
+      - postgres
+    ports:
+      - "8501:8501"
+    environment:
+      # Gemini API Key (Lấy từ https://aistudio.google.com/app/apikey)
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      # Trino connection
+      - TRINO_HOST=trino
+      - TRINO_PORT=8081
+      - TRINO_CATALOG=delta
+      - TRINO_SCHEMA=gold
+      # PostgreSQL for chat history
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=frauddb
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    networks:
+      - data_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
 volumes:
   postgres_data:
   minio_data:
