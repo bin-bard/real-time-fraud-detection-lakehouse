@@ -224,6 +224,9 @@ services:
       POSTGRES_DB: frauddb
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
+      # MODE=idle: Không tự động chạy, chờ docker exec
+      # Không set MODE (default): Tự động streaming khi start
+      MODE: idle # Bỏ dòng này hoặc comment để auto-stream
     volumes:
       - ./data:/data # Mount thư mục data chứa file csv
     networks:

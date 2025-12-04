@@ -111,9 +111,34 @@ docker compose up -d --build
 
 **⏳ Thời gian khởi động:** ~5-10 phút (tải images + khởi tạo services)
 
-### 3. Tải dữ liệu ban đầu (Tùy chọn - Khuyến nghị)
+### 3. Tải dữ liệu và quản lý Data Producer
 
-Để có đủ dữ liệu cho huấn luyện ML ngay lập tức:
+#### 📌 **Data Producer có 2 chế độ hoạt động:**
+
+**🔹 IDLE MODE** (Mặc định - `MODE=idle`):
+
+- Container chỉ sống, **KHÔNG tự động** load data
+- Bạn phải chạy thủ công qua `docker exec`
+- Dùng cho: Bulk load ban đầu, kiểm soát hoàn toàn
+
+**🔹 AUTO-STREAM MODE** (Bỏ `MODE=idle`):
+
+- Container **tự động streaming** khi start/restart
+- Dùng cho: Sau khi đã bulk load xong, muốn stream liên tục
+
+---
+
+#### **A. Bulk Load Ban Đầu (Khuyến nghị - IDLE MODE)**
+
+**Bước 1: Đảm bảo IDLE MODE** (file `docker-compose.yml`):
+
+```yaml
+data-producer:
+  environment:
+    MODE: idle # ← Để IDLE mode
+```
+
+**Bước 2: Bulk load 50K giao dịch:**
 
 ```bash
 # Tải 50K giao dịch (~250 giao dịch gian lận)
@@ -122,12 +147,72 @@ docker exec data-producer python producer.py --bulk-load 50000
 
 **Kết quả:**
 
-- ~50K bản ghi trong 2-3 phút
-- ~250 giao dịch gian lận (tỷ lệ 0.5%)
-- Đủ dữ liệu cho huấn luyện ML ngay
-- Producer tự động tiếp tục streaming sau khi xong
+- ✅ ~50K bản ghi trong 2-3 phút
+- ✅ ~250 giao dịch gian lận (tỷ lệ 0.5%)
+- ✅ Đủ dữ liệu cho huấn luyện ML ngay
+- ✅ Checkpoint được lưu, không trùng lặp khi chạy lại
 
-**An toàn checkpoint:** Không trùng lặp bản ghi, tiếp tục đúng vị trí sau khi restart.
+---
+
+#### **B. Chuyển sang AUTO-STREAM MODE (Streaming liên tục)**
+
+**Sau khi bulk load xong**, nếu muốn container **tự động streaming** khi stop/start:
+
+**Bước 1: Sửa `docker-compose.yml`:**
+
+```yaml
+data-producer:
+  environment:
+    # MODE: idle  # ← Comment hoặc xóa dòng này
+```
+
+**Bước 2: Restart container:**
+
+```bash
+docker compose up -d data-producer
+```
+
+**Bước 3: Test auto-streaming:**
+
+```bash
+# Stop
+docker stop data-producer
+
+# Start → Tự động streaming
+docker start data-producer
+
+# Hoặc restart trực tiếp
+docker restart data-producer
+```
+
+**Kết quả:**
+
+- ✅ Container tự động chạy streaming mode
+- ✅ Dữ liệu được load từ từ theo thời gian thực (TIME_SCALING_FACTOR = 0.001)
+- ✅ Tiếp tục từ checkpoint, không trùng lặp
+
+---
+
+#### **C. Chạy Streaming thủ công (IDLE MODE)**
+
+Nếu vẫn giữ `MODE=idle`, muốn streaming thủ công:
+
+```bash
+docker exec -it data-producer python producer.py
+```
+
+**Dừng streaming:** Nhấn `Ctrl+C`
+
+---
+
+#### **📋 Tóm tắt workflow:**
+
+| Mục đích                    | Cách làm                                           |
+| --------------------------- | -------------------------------------------------- |
+| **Bulk load lần đầu**       | `MODE=idle` + `docker exec ... --bulk-load 50000`  |
+| **Auto-stream khi restart** | Xóa `MODE=idle` + `docker restart data-producer`   |
+| **Streaming thủ công**      | `MODE=idle` + `docker exec ... python producer.py` |
+| **Reset checkpoint**        | `docker compose down -v` (xóa volumes)             |
 
 ### 4. Kiểm tra hệ thống
 
