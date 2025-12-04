@@ -83,7 +83,7 @@ def get_llm():
         st.stop()
     
     llm = ChatGoogleGenerativeAI(
-        model="gemini-2.0-flash-exp",  # Model FREE tier - Nhanh nhất
+        model="gemini-2.5-flash-lite",
         temperature=0,
         google_api_key=GOOGLE_API_KEY,
         convert_system_message_to_human=True  # Gemini yêu cầu
@@ -93,22 +93,20 @@ def get_llm():
 @st.cache_resource
 def get_sql_agent():
     """Tạo SQL Agent - AI biết query database"""
-    from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
+    from langchain_community.agent_toolkits import SQLDatabaseToolkit
     
     db = get_trino_db()
     llm = get_llm()
     
-    # Tạo toolkit trước (API mới yêu cầu)
+    # Tạo toolkit (phiên bản mới yêu cầu)
     toolkit = SQLDatabaseToolkit(db=db, llm=llm)
     
+    # Tạo agent với toolkit
     agent = create_sql_agent(
         llm=llm,
         toolkit=toolkit,
-        agent_type="zero-shot-react-description",  # Agent type tương thích với Gemini
         verbose=True,
-        handle_parsing_errors=True,
-        max_iterations=5,  # Giới hạn số lần thử
-        max_execution_time=30  # Timeout 30s
+        handle_parsing_errors=True
     )
     return agent
 
@@ -385,8 +383,29 @@ def main():
                 try:
                     agent = get_sql_agent()
                     
-                    # Run agent
-                    response = agent.invoke({"input": prompt})
+                    # Thêm system instruction để AI hiểu tiếng Việt
+                    system_instruction = """
+                    Bạn là chuyên gia phân tích gian lận tài chính, hỗ trợ người dùng Việt Nam.
+                    
+                    QUAN TRỌNG - THUẬT NGỮ TIẾNG VIỆT:
+                    - "bang" = "state" (tiểu bang Mỹ, có trong cột dim_location.state)
+                    - "gian lận" = "fraud" (is_fraud = 1)
+                    - "giao dịch" = "transaction"
+                    - "merchant" = "nhà bán hàng"
+                    - Database KHÔNG có thông tin "country" (quốc gia)
+                    
+                    SCHEMA:
+                    - fact_transactions: Giao dịch (is_fraud, transaction_amount, merchant, ...)
+                    - dim_location: Vị trí (state, city, zip) - KHÔNG có country
+                    - dim_customer, dim_merchant, dim_time
+                    
+                    Trả lời bằng tiếng Việt, rõ ràng, có số liệu cụ thể.
+                    """
+                    
+                    full_prompt = f"{system_instruction}\n\nCâu hỏi: {prompt}"
+                    
+                    # Run agent với prompt đầy đủ
+                    response = agent.invoke({"input": full_prompt})
                     
                     # Extract answer and SQL
                     answer = response.get("output", "Xin lỗi, tôi không hiểu câu hỏi.")
