@@ -7,6 +7,7 @@ from pyspark.sql.functions import col, when, lit, isnan, isnull
 from pyspark.sql.types import DoubleType, IntegerType
 import mlflow
 import mlflow.spark
+from mlflow.tracking import MlflowClient
 import logging
 import os
 import sys
@@ -331,6 +332,48 @@ def train_model(spark, model_name="RandomForest"):
             log_step("MLFLOW", "Saving model to MLflow...")
             mlflow.spark.log_model(model, "model", registered_model_name=f"fraud_detection_{model_name.lower()}")
             log_step("MLFLOW", f"✅ Model registered: fraud_detection_{model_name.lower()}")
+            
+            # Get current run ID and model version
+            run_id = mlflow.active_run().info.run_id
+            
+            # AUTO-PROMOTE to Production if metrics are good
+            log_step("MLFLOW", "Checking if model should be promoted to Production...")
+            if accuracy >= 0.90 and f1 >= 0.85 and auc >= 0.90:
+                try:
+                    client = MlflowClient()
+                    model_name_full = f"fraud_detection_{model_name.lower()}"
+                    
+                    # Wait a bit for model registration to complete
+                    import time
+                    time.sleep(2)
+                    
+                    # Get the latest version
+                    versions = client.search_model_versions(f"name='{model_name_full}'")
+                    if versions:
+                        latest_version = max(versions, key=lambda x: int(x.version))
+                        version_number = latest_version.version
+                        
+                        # Transition to Production
+                        client.transition_model_version_stage(
+                            name=model_name_full,
+                            version=version_number,
+                            stage="Production",
+                            archive_existing_versions=True  # Auto-archive old Production models
+                        )
+                        
+                        log_step("MLFLOW", f"🎉 Model v{version_number} AUTO-PROMOTED to Production!")
+                        log_step("MLFLOW", f"Reason: Accuracy={accuracy:.4f}, F1={f1:.4f}, AUC={auc:.4f}")
+                    else:
+                        log_step("MLFLOW", "⚠️ No model versions found for auto-promotion")
+                        
+                except Exception as e:
+                    log_step("MLFLOW", f"⚠️ Auto-promotion failed: {str(e)}")
+                    log_step("MLFLOW", "You can manually promote in MLflow UI: http://localhost:5000")
+            else:
+                log_step("MLFLOW", f"📊 Model metrics below threshold for auto-promotion:")
+                log_step("MLFLOW", f"   Current: Accuracy={accuracy:.4f}, F1={f1:.4f}, AUC={auc:.4f}")
+                log_step("MLFLOW", f"   Required: Accuracy>=0.90, F1>=0.85, AUC>=0.90")
+                log_step("MLFLOW", "   Manual promotion available in MLflow UI: http://localhost:5000")
             
             # Print results
             log_step("RESULTS", "=" * 60)
