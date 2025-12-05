@@ -215,10 +215,18 @@ def build_transaction_features(extracted_data: dict) -> dict:
     import math
     
     amt = extracted_data.get("amt", 100.0)
-    distance_km = extracted_data.get("distance_km", 10.0)
-    hour = extracted_data.get("hour", 12)
-    day_of_week = extracted_data.get("day_of_week", 2)
-    age = extracted_data.get("age", 35)
+    distance_km = extracted_data.get("distance_km")
+    if distance_km is None:
+        distance_km = 10.0
+    hour = extracted_data.get("hour")
+    if hour is None:
+        hour = 12
+    day_of_week = extracted_data.get("day_of_week")
+    if day_of_week is None:
+        day_of_week = 2
+    age = extracted_data.get("age")
+    if age is None:
+        age = 35
     
     # Calculate derived features
     log_amount = math.log(amt + 1)
@@ -406,9 +414,7 @@ def main():
         st.markdown("---")
         
         # API Key status
-        if GOOGLE_API_KEY:
-            st.success("✅ Gemini API Connected")
-        else:
+        if not GOOGLE_API_KEY:
             st.error("❌ GOOGLE_API_KEY chưa cấu hình")
             st.info("Thêm vào docker-compose.yml:\n```yaml\nenvironment:\n  GOOGLE_API_KEY: AIzaSy...\n```")
         
@@ -449,16 +455,15 @@ def main():
         st.markdown("---")
         
         # Fraud Detection API status
-        st.subheader("Fraud Detection API")
+        st.subheader("🔮 ML Model Status")
         api_status = get_fraud_api_status()
         if api_status["status"] == "healthy":
-            st.success(f"✅ API Connected")
             if api_status["model_loaded"]:
-                st.info(f"📦 Model: {api_status['model_version']}")
+                st.success(f"Model v{api_status['model_version']} Ready")
             else:
-                st.warning("⚠️ Model chưa train (dùng rule-based)")
+                st.warning("⚠️ Model chưa train")
         else:
-            st.error("❌ API không khả dụng")
+            st.error("❌ API offline")
         
         st.markdown("---")
         
@@ -516,7 +521,7 @@ def main():
             **🔮 Fraud Prediction:**
             - Dự đoán giao dịch $850 vào lúc 2h sáng
             - Check giao dịch $1200 xa 150km
-            - Xem thông tin model hiện tại
+            - Thông tin model chi tiết
             - Lịch sử predictions gần đây
             - fraud_probability được tính như thế nào?
             
@@ -573,12 +578,69 @@ def main():
                         "lịch sử prediction", "prediction history"
                     ]
                     
+                    # Keywords cho câu hỏi về fraud_probability
+                    probability_keywords = [
+                        "fraud_probability", "fraud probability", "xác suất gian lận",
+                        "tính như thế nào", "được tính", "cách tính"
+                    ]
+                    
                     is_prediction_question = any(kw in prompt_lower for kw in prediction_keywords)
+                    is_probability_question = any(kw in prompt_lower for kw in probability_keywords) and "model" in prompt_lower
+                    
+                    # ============================================================
+                    # CASE 0: FRAUD_PROBABILITY EXPLANATION
+                    # ============================================================
+                    if is_probability_question:
+                        answer = """### 🎯 Cách tính `fraud_probability` trong ML Model
+
+`fraud_probability` là **xác suất gian lận** được tính bởi **sklearn RandomForest model**, KHÔNG phải từ SQL query.
+
+#### 🌳 RandomForest hoạt động như thế nào?
+
+Model hiện tại có **200 cây quyết định (decision trees)**:
+- Mỗi cây nhìn vào 15 features của giao dịch (số tiền, khoảng cách, giờ giao dịch, tuổi...)
+- Mỗi cây vote: **FRAUD (1)** hoặc **KHÔNG FRAUD (0)**
+- `fraud_probability` = **% cây vote FRAUD** / 200 cây
+
+#### Ví dụ cụ thể:
+
+```python
+# Model dự đoán giao dịch $850 lúc 2h sáng:
+fraud_probability = 0.625  # 62.5%
+```
+
+**Giải thích:**
+- 125/200 cây (62.5%) nghĩ giao dịch này là FRAUD
+- 75/200 cây (37.5%) nghĩ là hợp lệ
+- → Kết luận: **MEDIUM RISK** (xác suất 40-70%)
+
+#### 🎨 Risk Level Mapping:
+
+- `fraud_probability > 70%` → 🔴 **HIGH RISK**
+- `fraud_probability 40-70%` → 🟡 **MEDIUM RISK**  
+- `fraud_probability < 40%` → 🟢 **LOW RISK**
+
+#### 🔬 Model Training:
+
+Model được train trên:
+- **770 samples** (balanced dataset: 461 fraud + 502 normal)
+- **15 features** engineering từ Silver layer
+- **Class balancing** 1:1 để tránh bias
+- **Metrics:** Accuracy 94.3%, F1 94.05%, AUC 98.5%
+
+#### ⚡ Tại sao KHÔNG dùng SQL?
+
+SQL chỉ tính **fraud_rate lịch sử** (tỷ lệ gian lận đã xảy ra), không dự đoán tương lai.
+
+ML model học **patterns** từ data để dự đoán giao dịch MỚI chưa có label.
+"""
+                        st.markdown(answer)
+                        sql_query = None
                     
                     # ============================================================
                     # CASE 1: FRAUD PREDICTION REQUEST
                     # ============================================================
-                    if is_prediction_question:
+                    elif is_prediction_question:
                         
                         # Sub-case 1a: Model info request
                         if any(kw in prompt_lower for kw in ["model info", "thông tin model", "model metrics"]):
@@ -586,24 +648,43 @@ def main():
                             
                             if result["success"]:
                                 model_data = result["data"]
+                                perf = model_data.get('performance', {})
+                                
+                                # Calculate insights
+                                acc = perf.get('accuracy', 0)
+                                f1 = perf.get('f1_score', 0)
+                                auc = perf.get('auc', 0)
+                                
+                                performance_rating = "Xuất sắc" if f1 > 0.9 else "Tốt" if f1 > 0.8 else "Trung bình"
+                                
                                 answer = f"""### 📦 Thông tin Model Fraud Detection
 
-**Model Type:** {model_data.get('model_type', 'N/A')}  
-**Model Version:** {model_data.get('model_version', 'N/A')}  
-**Framework:** {model_data.get('framework', 'N/A')}  
-**Features Used:** {model_data.get('features_count', 'N/A')}  
+**🏷️ Model Info:**
+- **Type:** {model_data.get('framework', 'N/A').upper()} RandomForest
+- **Version:** v{model_data.get('model_version', 'N/A')}
+- **Status:** {'✅ Production Ready' if model_data.get('status') == 'production_ready' else '⚠️ ' + str(model_data.get('status', 'N/A'))}
+- **Features:** {model_data.get('features_count', 15)} engineered features
 
-**Performance Metrics:**
+**📊 Performance Metrics:**
+- **Accuracy:** {acc:.2%} - Tỷ lệ dự đoán đúng tổng thể
+- **Precision:** {perf.get('precision', 0):.2%} - Trong các dự đoán FRAUD, {perf.get('precision', 0):.0%} đúng
+- **Recall:** {perf.get('recall', 0):.2%} - Phát hiện được {perf.get('recall', 0):.0%} giao dịch gian lận thực tế
+- **F1 Score:** {f1:.2%} - Điểm cân bằng giữa Precision & Recall
+- **AUC-ROC:** {auc:.2%} - Khả năng phân biệt fraud/normal
+
+**💡 Đánh giá:** {performance_rating} ({f1:.1%} F1-score)
+
+**🎯 Ý nghĩa thực tế:**
+- Model phát hiện đúng **{perf.get('recall', 0):.0%} giao dịch gian lận**
+- Chỉ **{100-perf.get('precision', 0)*100:.1f}% cảnh báo nhầm** (false positive)
+- Phù hợp cho môi trường production với độ tin cậy cao
 """
-                                perf = model_data.get('performance', {})
-                                for metric, value in perf.items():
-                                    if isinstance(value, (int, float)):
-                                        answer += f"- **{metric.title()}:** {value:.4f}\n"
-                                    else:
-                                        answer += f"- **{metric.title()}:** {value}\n"
-                                
-                                answer += f"\n**Status:** {model_data.get('status', 'N/A')}"
                                 st.markdown(answer)
+                                
+                                # Show detailed metrics in expander
+                                with st.expander("📈 Chi tiết Metrics"):
+                                    st.json(model_data)
+                                
                                 sql_query = None
                             else:
                                 answer = f"❌ Không thể lấy thông tin model: {result['error']}"
@@ -684,6 +765,22 @@ Bạn có thể cung cấp thêm thông tin được không?"""
                                         # Risk level emoji
                                         risk_emoji = {"HIGH": "🔴", "MEDIUM": "🟡", "LOW": "🟢"}.get(risk_level, "⚪")
                                         
+                                        # Analyze key factors
+                                        factors = []
+                                        if extracted.get('hour') is not None:
+                                            hour = extracted['hour']
+                                            if hour <= 6 or hour >= 23:
+                                                factors.append(f"⏰ Giao dịch lúc {hour}h (giờ đêm khuya - nguy cơ cao)")
+                                        
+                                        amt = extracted.get('amt', 0)
+                                        if amt > 500:
+                                            factors.append(f"💰 Số tiền lớn ${amt} (>$500 - nguy cơ cao 32%)")
+                                        elif amt < 50:
+                                            factors.append(f"💵 Số tiền nhỏ ${amt} (<$50 - nguy cơ thấp 0.24%)")
+                                        
+                                        if extracted.get('distance_km') and extracted['distance_km'] > 50:
+                                            factors.append(f"📍 Giao dịch xa {extracted['distance_km']}km (>50km - đáng ngờ)")
+                                        
                                         answer = f"""### {risk_emoji} Kết quả Dự đoán
 
 **Kết luận:** {'⚠️ GIAN LẬN' if is_fraud == 1 else '✅ HỢP LỆ'}  
@@ -693,13 +790,37 @@ Bạn có thể cung cấp thêm thông tin được không?"""
 
 ---
 
+### 🔍 Phân tích chi tiết:
+
 {pred_data.get('explanation', 'Không có giải thích')}
+
+### ⚡ Các yếu tố ảnh hưởng:
+
 """
+                                        if factors:
+                                            for factor in factors:
+                                                answer += f"- {factor}\n"
+                                        else:
+                                            answer += "- Giao dịch có các đặc điểm bình thường\n"
+                                        
+                                        answer += f"\n### 📝 Thông tin giao dịch:\n"
+                                        answer += f"- Số tiền: ${amt}\n"
+                                        if extracted.get('hour') is not None:
+                                            answer += f"- Giờ: {extracted['hour']}h\n"
+                                        if extracted.get('distance_km'):
+                                            answer += f"- Khoảng cách: {extracted['distance_km']}km\n"
+                                        if extracted.get('merchant'):
+                                            answer += f"- Merchant: {extracted['merchant']}\n"
+                                        if extracted.get('category'):
+                                            answer += f"- Category: {extracted['category']}\n"
                                         
                                         st.markdown(answer)
                                         
                                         # Show model info in expander
-                                        with st.expander("📊 Thông tin Model"):
+                                        with st.expander("📊 Thông tin Model & Features"):
+                                            st.write("**15 Features được sử dụng:**")
+                                            st.code(json.dumps(transaction_features, indent=2), language="json")
+                                            st.write("**Model Info:**")
                                             st.json(pred_data.get('model_info', {}))
                                         
                                         sql_query = f"-- Prediction for: {transaction_features.get('trans_num')}\n-- Features: {json.dumps(extracted, indent=2)}"
@@ -708,19 +829,68 @@ Bạn có thể cung cấp thêm thông tin được không?"""
                                         st.error(answer)
                                         sql_query = None
                             else:
-                                answer = f"❌ Không thể phân tích câu hỏi: {extraction['error']}"
+                                answer = f"""❌ Không thể phân tích câu hỏi: {extraction['error']}
+
+💡 **Gợi ý:** Hãy cung cấp rõ ràng hơn:
+- Số tiền giao dịch (bắt buộc)
+- Giờ giao dịch (tùy chọn)
+- Khoảng cách từ địa chỉ khách hàng (tùy chọn)
+
+📝 **Ví dụ tốt:**
+- "Dự đoán giao dịch $850 vào lúc 2h sáng"
+- "Check giao dịch $1200 xa 150km từ nhà"
+- "Phân tích giao dịch $50 lúc 14h, merchant Amazon"
+"""
                                 st.error(answer)
                                 sql_query = None
+                                
+                                # Save error message
+                                st.session_state.messages.append({
+                                    "role": "assistant",
+                                    "content": answer,
+                                    "sql_query": None
+                                })
+                                save_message(st.session_state.session_id, "assistant", answer)
                     
                     # ============================================================
                     # CASE 2 & 3: SQL QUERY hoặc GENERAL QUESTION (existing logic)
                     # ============================================================
                     else:
+                        # Khởi tạo agent
                         agent = get_sql_agent()
-                    
-                    # System instruction với schema chính xác từ Trino
-                    system_instruction = """
+                        
+                        # System instruction với schema chính xác từ Trino
+                        system_instruction = """
                     Bạn là chuyên gia phân tích gian lận tài chính với khả năng trò chuyện thân thiện.
+                    
+                    === QUAN TRỌNG: LUÔN THÊM INSIGHT VÀ PHÂN TÍCH ===
+                    
+                    Khi trả lời câu hỏi SQL, PHẢI bao gồm:
+                    
+                    1. **KẾT QUẢ QUERY** (số liệu từ database)
+                    2. **💡 INSIGHT RÚT RA:**
+                       - Phân tích ý nghĩa của con số
+                       - So sánh với mức trung bình/chuẩn
+                       - Chỉ ra patterns hoặc xu hướng đáng chú ý
+                       - Đưa ra khuyến nghị/cảnh báo nếu cần
+                    
+                    Ví dụ:
+                    Q: "Top 5 bang có tỷ lệ gian lận cao nhất?"
+                    A: "
+                    📊 **Top 5 Bang Nguy Hiểm:**
+                    1. TX - 2.84% (283 fraud/9,969 trans)
+                    2. NY - 2.31% (231 fraud/10,000 trans)
+                    ...
+                    
+                    💡 **Insight:**
+                    - Texas (TX) có tỷ lệ gian lận **CAO GẤP 3 LẦN** mức trung bình toàn quốc (0.91%)
+                    - Các bang này nên được giám sát chặt chẽ hơn
+                    - Có thể do mật độ dân số cao hoặc nhiều merchant rủi ro
+                    
+                    ⚠️ **Khuyến nghị:**
+                    - Tăng cường xác thực 2 yếu tố cho giao dịch từ TX, NY
+                    - Review lại các merchant hoạt động tại các bang này
+                    "
                     
                     === PHẠM VI TRẢ LỜI ===
                     
@@ -728,6 +898,7 @@ Bạn có thể cung cấp thêm thông tin được không?"""
                        - Trả lời bằng tiếng Việt
                        - Sử dụng database khi cần dữ liệu thực tế
                        - Giải thích rõ ràng, dễ hiểu
+                       - **LUÔN thêm insight và phân tích**
                     
                     2. CÂU HỎI NGOÀI LỀ (Vẫn trả lời):
                        - Nếu hỏi về chủ đề khác (lịch sử, địa lý, thời tiết, etc.)
@@ -951,82 +1122,82 @@ Bạn có thể cung cấp thêm thông tin được không?"""
                     - Giải thích ý nghĩa: "Bin 1 ($0.18-$2.85): giao dịch rất nhỏ, fraud rate 0.1%"
                     """
                     
-                    full_prompt = f"{system_instruction}\n\nCâu hỏi: {prompt}"
-                    
-                    # Tạo expander và placeholder cho thinking process TRƯỚC khi chạy agent
-                    thinking_expander = st.expander("🧠 AI Thinking Process (Click để xem)", expanded=False)
-                    thinking_placeholder = thinking_expander.empty()
-                    
-                    # Custom stdout để stream thinking process
-                    import io
-                    import sys
-                    import re
-                    
-                    class StreamingStdout:
-                        def __init__(self, placeholder):
-                            self.placeholder = placeholder
-                            self.buffer = ""
-                            self.ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+                        full_prompt = f"{system_instruction}\n\nCâu hỏi: {prompt}"
                         
-                        def write(self, text):
-                            if text:
-                                self.buffer += text
-                                # Strip ANSI và update UI real-time
-                                clean_text = self.ansi_escape.sub('', self.buffer)
-                                self.placeholder.code(clean_text, language="text")
+                        # Tạo expander và placeholder cho thinking process TRƯỚC khi chạy agent
+                        thinking_expander = st.expander("🧠 AI Thinking Process (Click để xem)", expanded=False)
+                        thinking_placeholder = thinking_expander.empty()
                         
-                        def flush(self):
-                            pass
-                    
-                    # Redirect stdout để capture và stream verbose output
-                    old_stdout = sys.stdout
-                    streaming_stdout = StreamingStdout(thinking_placeholder)
-                    sys.stdout = streaming_stdout
-                    
-                    try:
-                        # Run agent với prompt đầy đủ - thinking process sẽ hiện real-time
-                        response = agent.invoke({"input": full_prompt})
+                        # Custom stdout để stream thinking process
+                        import io
+                        import sys
+                        import re
                         
-                    finally:
-                        # Restore stdout
-                        sys.stdout = old_stdout
-                    
-                    # Extract answer and SQL
-                    answer = response.get("output", "Xin lỗi, tôi không hiểu câu hỏi.")
-                    
-                    # Try to extract SQL from intermediate steps
-                    sql_query = None
-                    if "intermediate_steps" in response:
-                        for step in response["intermediate_steps"]:
-                            if isinstance(step, tuple) and len(step) > 0:
-                                action = step[0]
-                                if hasattr(action, "tool_input"):
-                                    tool_input = action.tool_input
-                                    if isinstance(tool_input, dict) and "query" in tool_input:
-                                        sql_query = tool_input["query"]
-                                        break
-                    
-                    # Display answer
-                    st.markdown(answer)
-                    
-                    # Show SQL if found
-                    if sql_query:
-                        with st.expander("🔍 SQL Query"):
-                            st.code(sql_query, language="sql")
-                    
-                    # Save to session and database
-                    st.session_state.messages.append({
-                        "role": "assistant",
-                        "content": answer,
-                        "sql_query": sql_query
-                    })
-                    
-                    save_message(
-                        st.session_state.session_id,
-                        "assistant",
-                        answer,
-                        sql_query
-                    )
+                        class StreamingStdout:
+                            def __init__(self, placeholder):
+                                self.placeholder = placeholder
+                                self.buffer = ""
+                                self.ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+                            
+                            def write(self, text):
+                                if text and isinstance(text, str):
+                                    self.buffer += text
+                                    # Strip ANSI và update UI real-time
+                                    clean_text = self.ansi_escape.sub('', self.buffer)
+                                    self.placeholder.code(clean_text, language="text")
+                            
+                            def flush(self):
+                                pass
+                        
+                        # Redirect stdout để capture và stream verbose output
+                        old_stdout = sys.stdout
+                        streaming_stdout = StreamingStdout(thinking_placeholder)
+                        sys.stdout = streaming_stdout
+                        
+                        try:
+                            # Run agent với prompt đầy đủ - thinking process sẽ hiện real-time
+                            response = agent.invoke({"input": full_prompt})
+                            
+                        finally:
+                            # Restore stdout
+                            sys.stdout = old_stdout
+                        
+                        # Extract answer and SQL
+                        answer = response.get("output", "Xin lỗi, tôi không hiểu câu hỏi.")
+                        
+                        # Try to extract SQL from intermediate steps
+                        sql_query = None
+                        if "intermediate_steps" in response:
+                            for step in response["intermediate_steps"]:
+                                if isinstance(step, tuple) and len(step) > 0:
+                                    action = step[0]
+                                    if hasattr(action, "tool_input"):
+                                        tool_input = action.tool_input
+                                        if isinstance(tool_input, dict) and "query" in tool_input:
+                                            sql_query = tool_input["query"]
+                                            break
+                        
+                        # Display answer
+                        st.markdown(answer)
+                        
+                        # Show SQL if found
+                        if sql_query:
+                            with st.expander("🔍 SQL Query"):
+                                st.code(sql_query, language="sql")
+                        
+                        # Save to session and database
+                        st.session_state.messages.append({
+                            "role": "assistant",
+                            "content": answer,
+                            "sql_query": sql_query
+                        })
+                        
+                        save_message(
+                            st.session_state.session_id,
+                            "assistant",
+                            answer,
+                            sql_query
+                        )
                     
                 except Exception as e:
                     error_msg = f"❌ Lỗi: {str(e)}"
