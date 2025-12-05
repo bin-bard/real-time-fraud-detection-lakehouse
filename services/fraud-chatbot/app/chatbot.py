@@ -454,26 +454,21 @@ def main():
         
         st.markdown("---")
         
-        # Fraud Detection API status
-        st.subheader("🔮 ML Model Status")
+        # System Status - Combined
+        st.subheader("⚙️ System Status")
+        
+        # API & Model Status
         api_status = get_fraud_api_status()
         if api_status["status"] == "healthy":
             if api_status["model_loaded"]:
-                st.success(f"Model v{api_status['model_version']} Ready")
+                st.success(f"✅ ML Model v{api_status['model_version']} Ready")
             else:
                 st.warning("⚠️ Model chưa train")
         else:
             st.error("❌ API offline")
         
-        st.markdown("---")
-        
-        # Database info
-        st.subheader("🗄️ Database Info")
-        st.info(f"""
-        **Trino Catalog:** {TRINO_CATALOG}  
-        **Schema:** {TRINO_SCHEMA}  
-        **Tables:** 5 base + 9 views
-        """)
+        # Database Connection
+        st.info(f"📦 Trino: {TRINO_CATALOG}.{TRINO_SCHEMA}")
         
         # Test connection
         if st.button("🔌 Test Connection"):
@@ -636,15 +631,27 @@ ML model học **patterns** từ data để dự đoán giao dịch MỚI chưa 
 """
                         st.markdown(answer)
                         sql_query = None
+                        
+                        # Save to database
+                        st.session_state.messages.append({
+                            "role": "assistant",
+                            "content": answer,
+                            "sql_query": None
+                        })
+                        save_message(st.session_state.session_id, "assistant", answer)
                     
-                    # ============================================================
+                    # ==============================================================
                     # CASE 1: FRAUD PREDICTION REQUEST
-                    # ============================================================
+                    # ==============================================================
                     elif is_prediction_question:
                         
                         # Sub-case 1a: Model info request
-                        if any(kw in prompt_lower for kw in ["model info", "thông tin model", "model metrics"]):
-                            result = get_model_info()
+                        if any(kw in prompt_lower for kw in ["model info", "thông tin model", "model metrics", "chi tiết"]):
+                            # Thêm loading delay
+                            import time
+                            with st.spinner("🕵️ Đang load model info..."):
+                                time.sleep(1.2)
+                                result = get_model_info()
                             
                             if result["success"]:
                                 model_data = result["data"]
@@ -657,27 +664,16 @@ ML model học **patterns** từ data để dự đoán giao dịch MỚI chưa 
                                 
                                 performance_rating = "Xuất sắc" if f1 > 0.9 else "Tốt" if f1 > 0.8 else "Trung bình"
                                 
-                                answer = f"""### 📦 Thông tin Model Fraud Detection
+                                answer = f"""### ⚡ Model Fraud Detection
 
-**🏷️ Model Info:**
-- **Type:** {model_data.get('framework', 'N/A').upper()} RandomForest
-- **Version:** v{model_data.get('model_version', 'N/A')}
-- **Status:** {'✅ Production Ready' if model_data.get('status') == 'production_ready' else '⚠️ ' + str(model_data.get('status', 'N/A'))}
-- **Features:** {model_data.get('features_count', 15)} engineered features
+**Type:** {model_data.get('framework', 'N/A').upper()} RandomForest v{model_data.get('model_version', 'N/A')}  
+**Status:** {'✅ Production' if model_data.get('status') == 'production_ready' else '⚠️ ' + str(model_data.get('status', 'N/A'))}  
+**Features:** {model_data.get('features_count', 15)} features  
 
-**📊 Performance Metrics:**
-- **Accuracy:** {acc:.2%} - Tỷ lệ dự đoán đúng tổng thể
-- **Precision:** {perf.get('precision', 0):.2%} - Trong các dự đoán FRAUD, {perf.get('precision', 0):.0%} đúng
-- **Recall:** {perf.get('recall', 0):.2%} - Phát hiện được {perf.get('recall', 0):.0%} giao dịch gian lận thực tế
-- **F1 Score:** {f1:.2%} - Điểm cân bằng giữa Precision & Recall
-- **AUC-ROC:** {auc:.2%} - Khả năng phân biệt fraud/normal
-
-**💡 Đánh giá:** {performance_rating} ({f1:.1%} F1-score)
-
-**🎯 Ý nghĩa thực tế:**
-- Model phát hiện đúng **{perf.get('recall', 0):.0%} giao dịch gian lận**
-- Chỉ **{100-perf.get('precision', 0)*100:.1f}% cảnh báo nhầm** (false positive)
-- Phù hợp cho môi trường production với độ tin cậy cao
+**Performance:** {performance_rating} 🎯
+- Accuracy: {acc:.1%} | F1: {f1:.1%} | AUC: {auc:.1%}
+- Recall: {perf.get('recall', 0):.1%} (phát hiện được {perf.get('recall', 0):.0%} fraud)
+- Precision: {perf.get('precision', 0):.1%} (chỉ {100-perf.get('precision', 0)*100:.1f}% nhầm)
 """
                                 st.markdown(answer)
                                 
@@ -750,8 +746,10 @@ Bạn có thể cung cấp thêm thông tin được không?"""
                                     
                                     transaction_features = build_transaction_features(extracted)
                                     
-                                    # Call API
-                                    with st.spinner("🔮 Đang dự đoán bằng ML model..."):
+                                    # Call API với loading delay
+                                    import time
+                                    with st.spinner("🔮 Đang phân tích bằng ML model..."):
+                                        time.sleep(1.8)  # Realistic loading
                                         pred_result = predict_fraud_with_api(transaction_features)
                                     
                                     if pred_result["success"]:
@@ -781,43 +779,40 @@ Bạn có thể cung cấp thêm thông tin được không?"""
                                         if extracted.get('distance_km') and extracted['distance_km'] > 50:
                                             factors.append(f"📍 Giao dịch xa {extracted['distance_km']}km (>50km - đáng ngờ)")
                                         
+                                        # Format output rõ ràng
                                         answer = f"""### {risk_emoji} Kết quả Dự đoán
 
-**Kết luận:** {'⚠️ GIAN LẬN' if is_fraud == 1 else '✅ HỢP LỆ'}  
-**Xác suất gian lận:** {prob:.1%}  
-**Risk Level:** {risk_level}  
-**Model:** {pred_data.get('model_version', 'N/A')}  
+**{'⚠️ GIAN LẬN' if is_fraud == 1 else '✅ HỢP LỆ'}** - Xác suất: {prob:.1%} - Risk: {risk_level}
 
 ---
 
-### 🔍 Phân tích chi tiết:
+**🔍 Phân tích:**
 
 {pred_data.get('explanation', 'Không có giải thích')}
-
-### ⚡ Các yếu tố ảnh hưởng:
-
 """
-                                        if factors:
-                                            for factor in factors:
-                                                answer += f"- {factor}\n"
-                                        else:
-                                            answer += "- Giao dịch có các đặc điểm bình thường\n"
-                                        
-                                        answer += f"\n### 📝 Thông tin giao dịch:\n"
-                                        answer += f"- Số tiền: ${amt}\n"
-                                        if extracted.get('hour') is not None:
-                                            answer += f"- Giờ: {extracted['hour']}h\n"
-                                        if extracted.get('distance_km'):
-                                            answer += f"- Khoảng cách: {extracted['distance_km']}km\n"
-                                        if extracted.get('merchant'):
-                                            answer += f"- Merchant: {extracted['merchant']}\n"
-                                        if extracted.get('category'):
-                                            answer += f"- Category: {extracted['category']}\n"
-                                        
                                         st.markdown(answer)
                                         
-                                        # Show model info in expander
-                                        with st.expander("📊 Thông tin Model & Features"):
+                                        # Chi tiết trong expander
+                                        with st.expander("⚡ Các yếu tố ảnh hưởng"):
+                                            if factors:
+                                                for factor in factors:
+                                                    st.write(f"- {factor}")
+                                            else:
+                                                st.write("- Giao dịch có các đặc điểm bình thường")
+                                            
+                                            st.write("\n**Thông tin:**")
+                                            st.write(f"- Số tiền: ${amt}")
+                                            if extracted.get('hour') is not None:
+                                                st.write(f"- Giờ: {extracted['hour']}h")
+                                            if extracted.get('distance_km'):
+                                                st.write(f"- Khoảng cách: {extracted['distance_km']}km")
+                                            if extracted.get('merchant'):
+                                                st.write(f"- Merchant: {extracted['merchant']}")
+                                            if extracted.get('category'):
+                                                st.write(f"- Category: {extracted['category']}")
+                                        
+                                        # Model details trong expander khác
+                                        with st.expander("⚙️ Model & Features"):
                                             st.write("**15 Features được sử dụng:**")
                                             st.code(json.dumps(transaction_features, indent=2), language="json")
                                             st.write("**Model Info:**")
@@ -863,34 +858,27 @@ Bạn có thể cung cấp thêm thông tin được không?"""
                         system_instruction = """
                     Bạn là chuyên gia phân tích gian lận tài chính với khả năng trò chuyện thân thiện.
                     
-                    === QUAN TRỌNG: LUÔN THÊM INSIGHT VÀ PHÂN TÍCH ===
+                    === QUAN TRỌNG: LUÔN THÊM INSIGHT NGẮN GỌN ===
                     
                     Khi trả lời câu hỏi SQL, PHẢI bao gồm:
                     
                     1. **KẾT QUẢ QUERY** (số liệu từ database)
-                    2. **💡 INSIGHT RÚT RA:**
-                       - Phân tích ý nghĩa của con số
-                       - So sánh với mức trung bình/chuẩn
-                       - Chỉ ra patterns hoặc xu hướng đáng chú ý
-                       - Đưa ra khuyến nghị/cảnh báo nếu cần
+                    2. **💡 INSIGHT (2-3 dòng):**
+                       - Ý nghĩa của con số (cao/thấp so với trung bình)
+                       - 1 khuyến nghị ngắn (nếu cần)
                     
                     Ví dụ:
                     Q: "Top 5 bang có tỷ lệ gian lận cao nhất?"
                     A: "
-                    📊 **Top 5 Bang Nguy Hiểm:**
-                    1. TX - 2.84% (283 fraud/9,969 trans)
-                    2. NY - 2.31% (231 fraud/10,000 trans)
+                    **Top 5 Bang Nguy Hiểm:**
+                    1. TX - 2.84% 
+                    2. NY - 2.31%
                     ...
                     
-                    💡 **Insight:**
-                    - Texas (TX) có tỷ lệ gian lận **CAO GẤP 3 LẦN** mức trung bình toàn quốc (0.91%)
-                    - Các bang này nên được giám sát chặt chẽ hơn
-                    - Có thể do mật độ dân số cao hoặc nhiều merchant rủi ro
-                    
-                    ⚠️ **Khuyến nghị:**
-                    - Tăng cường xác thực 2 yếu tố cho giao dịch từ TX, NY
-                    - Review lại các merchant hoạt động tại các bang này
+                    💡 **Insight:** Texas cao gấp 3 lần mức trung bình (0.91%). Nên tăng cường giám sát các giao dịch từ TX, NY.
                     "
+                    
+                    KHÔNG viết quá dài dòng! Giữ ngắn gọn, trọc tiếp.
                     
                     === PHẠM VI TRẢ LỜI ===
                     
