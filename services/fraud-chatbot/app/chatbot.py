@@ -16,6 +16,9 @@ from langchain_community.utilities import SQLDatabase
 from langchain_community.agent_toolkits import create_sql_agent
 from langchain.schema import HumanMessage, AIMessage
 import pandas as pd
+import requests
+import json
+import re
 
 # ============================================================
 # CONFIGURATION
@@ -37,6 +40,9 @@ POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
 POSTGRES_DB = os.getenv("POSTGRES_DB", "frauddb")
 POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
 POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "postgres")
+
+# FastAPI for fraud prediction
+FRAUD_API_URL = os.getenv("FRAUD_API_URL", "http://fraud-detection-api:8000")
 
 # ============================================================
 # DATABASE CONNECTIONS
@@ -109,6 +115,156 @@ def get_sql_agent():
         handle_parsing_errors=True
     )
     return agent
+
+# ============================================================
+# FRAUD PREDICTION HELPERS
+# ============================================================
+
+def get_fraud_api_status():
+    """Kiểm tra trạng thái Fraud Detection API"""
+    try:
+        response = requests.get(f"{FRAUD_API_URL}/health", timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            return {
+                "status": "healthy",
+                "model_loaded": data.get("model_loaded", False),
+                "model_version": data.get("model_version", "N/A")
+            }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+    return {"status": "unknown"}
+
+def predict_fraud_with_api(transaction_data: dict) -> dict:
+    """Gọi FastAPI để dự đoán fraud và lấy giải thích LLM"""
+    try:
+        response = requests.post(
+            f"{FRAUD_API_URL}/predict/explained",
+            json=transaction_data,
+            timeout=30  # Gemini might take time
+        )
+        response.raise_for_status()
+        return {"success": True, "data": response.json()}
+    except requests.exceptions.Timeout:
+        return {"success": False, "error": "API timeout (>30s)"}
+    except requests.exceptions.ConnectionError:
+        return {"success": False, "error": "Không thể kết nối tới Fraud Detection API"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+def get_model_info() -> dict:
+    """Lấy thông tin model từ API"""
+    try:
+        response = requests.get(f"{FRAUD_API_URL}/model/info", timeout=5)
+        response.raise_for_status()
+        return {"success": True, "data": response.json()}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+def get_prediction_history(limit: int = 10) -> dict:
+    """Lấy lịch sử predictions từ API"""
+    try:
+        response = requests.get(f"{FRAUD_API_URL}/predictions/history?limit={limit}", timeout=10)
+        response.raise_for_status()
+        return {"success": True, "data": response.json()}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+def extract_transaction_from_text(text: str, llm) -> dict:
+    """Dùng Gemini để extract thông tin transaction từ text tự nhiên"""
+    prompt = f"""
+Trích xuất thông tin giao dịch từ câu sau và trả về JSON.
+
+Câu hỏi: "{text}"
+
+Trả về JSON với các trường sau (nếu không có thì để null):
+{{
+    "amt": <số tiền>,
+    "distance_km": <khoảng cách km>,
+    "hour": <giờ 0-23>,
+    "day_of_week": <0=Mon, 6=Sun>,
+    "merchant": "<tên merchant>",
+    "category": "<category>",
+    "age": <tuổi khách hàng>
+}}
+
+Ví dụ:
+Input: "Check giao dịch $500 vào lúc 2h sáng"
+Output: {{"amt": 500, "hour": 2, "distance_km": null, "day_of_week": null, "merchant": null, "category": null, "age": null}}
+
+Chỉ trả về JSON, không giải thích.
+"""
+    
+    try:
+        response = llm.invoke([HumanMessage(content=prompt)])
+        json_text = response.content.strip()
+        
+        # Extract JSON from markdown code block if present
+        json_match = re.search(r'```(?:json)?\s*({.*?})\s*```', json_text, re.DOTALL)
+        if json_match:
+            json_text = json_match.group(1)
+        
+        # Parse JSON
+        data = json.loads(json_text)
+        return {"success": True, "data": data}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+def build_transaction_features(extracted_data: dict) -> dict:
+    """Build complete transaction features với giá trị mặc định"""
+    import math
+    
+    amt = extracted_data.get("amt", 100.0)
+    distance_km = extracted_data.get("distance_km", 10.0)
+    hour = extracted_data.get("hour", 12)
+    day_of_week = extracted_data.get("day_of_week", 2)
+    age = extracted_data.get("age", 35)
+    
+    # Calculate derived features
+    log_amount = math.log(amt + 1)
+    
+    # Amount bin (1-5)
+    if amt < 50:
+        amount_bin = 1
+    elif amt < 150:
+        amount_bin = 2
+    elif amt < 300:
+        amount_bin = 3
+    elif amt < 500:
+        amount_bin = 4
+    else:
+        amount_bin = 5
+    
+    is_zero_amount = 1 if amt == 0 else 0
+    is_high_amount = 1 if amt > 1000 else 0
+    is_distant_transaction = 1 if distance_km > 50 else 0
+    is_late_night = 1 if (hour >= 23 or hour <= 6) else 0
+    is_weekend = 1 if day_of_week >= 5 else 0
+    
+    # Trigonometric encoding for hour
+    hour_sin = math.sin(2 * math.pi * hour / 24)
+    hour_cos = math.cos(2 * math.pi * hour / 24)
+    
+    return {
+        "amt": amt,
+        "log_amount": log_amount,
+        "amount_bin": amount_bin,
+        "is_zero_amount": is_zero_amount,
+        "is_high_amount": is_high_amount,
+        "distance_km": distance_km,
+        "is_distant_transaction": is_distant_transaction,
+        "age": age,
+        "gender_encoded": 1,  # Default
+        "hour": hour,
+        "day_of_week": day_of_week,
+        "is_weekend": is_weekend,
+        "is_late_night": is_late_night,
+        "hour_sin": hour_sin,
+        "hour_cos": hour_cos,
+        "trans_num": f"CHAT_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+        "merchant": extracted_data.get("merchant"),
+        "category": extracted_data.get("category")
+    }
 
 # ============================================================
 # CHAT HISTORY MANAGEMENT
@@ -292,6 +448,20 @@ def main():
         
         st.markdown("---")
         
+        # Fraud Detection API status
+        st.subheader("🤖 Fraud Detection API")
+        api_status = get_fraud_api_status()
+        if api_status["status"] == "healthy":
+            st.success(f"✅ API Connected")
+            if api_status["model_loaded"]:
+                st.info(f"📦 Model: {api_status['model_version']}")
+            else:
+                st.warning("⚠️ Model chưa train (dùng rule-based)")
+        else:
+            st.error("❌ API không khả dụng")
+        
+        st.markdown("---")
+        
         # Database info
         st.subheader("🗄️ Database Info")
         st.info(f"""
@@ -337,14 +507,21 @@ def main():
         # Example queries
         with st.expander("💡 Câu hỏi mẫu"):
             st.markdown("""
+            **📊 SQL Analytics:**
             - Có bao nhiêu giao dịch gian lận hôm nay?
             - Top 5 bang có tỷ lệ gian lận cao nhất?
-            - Hiển thị fraud rate theo từng giờ
             - Merchant nào nguy hiểm nhất?
-            - Tổng số tiền bị gian lận tuần này?
             - Phân tích fraud patterns theo amount
-            - Category nào rủi ro nhất?
-            - Giao dịch gian lận gần đây nhất?
+            
+            **🔮 Fraud Prediction:**
+            - Dự đoán giao dịch $850 vào lúc 2h sáng
+            - Check giao dịch $1200 xa 150km
+            - Xem thông tin model hiện tại
+            - Lịch sử predictions gần đây
+            
+            **💬 General Questions:**
+            - Gian lận tài chính là gì?
+            - Các loại fraud phổ biến?
             """)
     
     # Main chat area
@@ -381,7 +558,164 @@ def main():
         with st.chat_message("assistant"):
             with st.spinner("🤔 Đang suy nghĩ..."):
                 try:
-                    agent = get_sql_agent()
+                    # ============================================================
+                    # PHÂN LOẠI CÂU HỎI: FRAUD PREDICTION vs SQL vs GENERAL
+                    # ============================================================
+                    
+                    prompt_lower = prompt.lower()
+                    
+                    # Keywords cho fraud prediction
+                    prediction_keywords = [
+                        "dự đoán", "predict", "check giao dịch", "kiểm tra giao dịch",
+                        "phân tích giao dịch", "đánh giá giao dịch", "xác minh",
+                        "model info", "thông tin model", "model metrics",
+                        "lịch sử prediction", "prediction history"
+                    ]
+                    
+                    is_prediction_question = any(kw in prompt_lower for kw in prediction_keywords)
+                    
+                    # ============================================================
+                    # CASE 1: FRAUD PREDICTION REQUEST
+                    # ============================================================
+                    if is_prediction_question:
+                        
+                        # Sub-case 1a: Model info request
+                        if any(kw in prompt_lower for kw in ["model info", "thông tin model", "model metrics"]):
+                            result = get_model_info()
+                            
+                            if result["success"]:
+                                model_data = result["data"]
+                                answer = f"""### 📦 Thông tin Model Fraud Detection
+
+**Model Type:** {model_data.get('model_type', 'N/A')}  
+**Model Version:** {model_data.get('model_version', 'N/A')}  
+**Framework:** {model_data.get('framework', 'N/A')}  
+**Features Used:** {model_data.get('features_count', 'N/A')}  
+
+**Performance Metrics:**
+"""
+                                perf = model_data.get('performance', {})
+                                for metric, value in perf.items():
+                                    if isinstance(value, (int, float)):
+                                        answer += f"- **{metric.title()}:** {value:.4f}\n"
+                                    else:
+                                        answer += f"- **{metric.title()}:** {value}\n"
+                                
+                                answer += f"\n**Status:** {model_data.get('status', 'N/A')}"
+                                st.markdown(answer)
+                                sql_query = None
+                            else:
+                                answer = f"❌ Không thể lấy thông tin model: {result['error']}"
+                                st.error(answer)
+                                sql_query = None
+                        
+                        # Sub-case 1b: Prediction history request
+                        elif any(kw in prompt_lower for kw in ["lịch sử", "history", "gần đây"]):
+                            result = get_prediction_history(limit=10)
+                            
+                            if result["success"]:
+                                data = result["data"]
+                                predictions = data.get('predictions', [])
+                                
+                                if predictions:
+                                    answer = f"""### 📜 Lịch sử Predictions ({data.get('count', 0)} gần nhất)
+
+"""
+                                    if data.get('accuracy'):
+                                        answer += f"**Accuracy so với label thực:** {data['accuracy']}%\n\n"
+                                    
+                                    # Show table
+                                    df = pd.DataFrame(predictions)
+                                    st.dataframe(df[['trans_num', 'is_fraud_predicted', 'prediction_score', 'model_version', 'prediction_time']], use_container_width=True)
+                                    
+                                    answer += f"\n✅ Hiển thị {len(predictions)} predictions gần nhất"
+                                else:
+                                    answer = "📭 Chưa có predictions nào trong database."
+                                
+                                st.markdown(answer)
+                                sql_query = None
+                            else:
+                                answer = f"❌ Không thể lấy lịch sử: {result['error']}"
+                                st.error(answer)
+                                sql_query = None
+                        
+                        # Sub-case 1c: Actual prediction request
+                        else:
+                            st.info("🔍 Đang phân tích yêu cầu dự đoán...")
+                            
+                            # Extract transaction info using LLM
+                            llm = get_llm()
+                            extraction = extract_transaction_from_text(prompt, llm)
+                            
+                            if extraction["success"]:
+                                extracted = extraction["data"]
+                                
+                                # Check if có đủ thông tin cơ bản
+                                if extracted.get("amt") is None:
+                                    answer = """⚠️ Để dự đoán gian lận, tôi cần ít nhất **số tiền giao dịch**.
+
+📝 Ví dụ câu hỏi tốt:
+- "Dự đoán giao dịch $850 vào lúc 2h sáng"
+- "Check giao dịch $1200 xa 150km, merchant ABC"
+- "Phân tích giao dịch $50 lúc 14h, category shopping_net"
+
+Bạn có thể cung cấp thêm thông tin được không?"""
+                                    st.warning(answer)
+                                    sql_query = None
+                                else:
+                                    # Build full transaction features
+                                    st.success(f"✅ Đã trích xuất: Số tiền ${extracted.get('amt')}, {extracted.get('hour', 'N/A')}h, {extracted.get('distance_km', 'N/A')}km")
+                                    
+                                    transaction_features = build_transaction_features(extracted)
+                                    
+                                    # Call API
+                                    with st.spinner("🔮 Đang dự đoán bằng ML model..."):
+                                        pred_result = predict_fraud_with_api(transaction_features)
+                                    
+                                    if pred_result["success"]:
+                                        pred_data = pred_result["data"]
+                                        
+                                        # Display prediction với formatting đẹp
+                                        risk_level = pred_data.get('risk_level', 'UNKNOWN')
+                                        is_fraud = pred_data.get('is_fraud_predicted', 0)
+                                        prob = pred_data.get('fraud_probability', 0)
+                                        
+                                        # Risk level emoji
+                                        risk_emoji = {"HIGH": "🔴", "MEDIUM": "🟡", "LOW": "🟢"}.get(risk_level, "⚪")
+                                        
+                                        answer = f"""### {risk_emoji} Kết quả Dự đoán
+
+**Kết luận:** {'⚠️ GIAN LẬN' if is_fraud == 1 else '✅ HỢP LỆ'}  
+**Xác suất gian lận:** {prob:.1%}  
+**Risk Level:** {risk_level}  
+**Model:** {pred_data.get('model_version', 'N/A')}  
+
+---
+
+{pred_data.get('explanation', 'Không có giải thích')}
+"""
+                                        
+                                        st.markdown(answer)
+                                        
+                                        # Show model info in expander
+                                        with st.expander("📊 Thông tin Model"):
+                                            st.json(pred_data.get('model_info', {}))
+                                        
+                                        sql_query = f"-- Prediction for: {transaction_features.get('trans_num')}\n-- Features: {json.dumps(extracted, indent=2)}"
+                                    else:
+                                        answer = f"❌ Lỗi dự đoán: {pred_result['error']}"
+                                        st.error(answer)
+                                        sql_query = None
+                            else:
+                                answer = f"❌ Không thể phân tích câu hỏi: {extraction['error']}"
+                                st.error(answer)
+                                sql_query = None
+                    
+                    # ============================================================
+                    # CASE 2 & 3: SQL QUERY hoặc GENERAL QUESTION (existing logic)
+                    # ============================================================
+                    else:
+                        agent = get_sql_agent()
                     
                     # System instruction với schema chính xác từ Trino
                     system_instruction = """

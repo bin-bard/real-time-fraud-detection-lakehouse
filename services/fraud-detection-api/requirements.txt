@@ -5,4 +5,7 @@ numpy
 pandas
 scikit-learn
 joblib
-mlflow
+mlflow==2.8.0
+boto3
+pyspark==3.4.1
+psycopg2-binary

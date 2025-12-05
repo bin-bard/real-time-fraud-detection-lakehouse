@@ -471,6 +471,7 @@ services:
     depends_on:
       - mlflow
       - minio
+      - postgres
     ports:
       - "8000:8000"
     environment:
@@ -480,6 +481,12 @@ services:
       - MLFLOW_S3_ENDPOINT_URL=http://minio:9000
       - MODEL_NAME=fraud_detection_randomforest
       - MODEL_STAGE=Production
+      # PostgreSQL connection for saving predictions
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=frauddb
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
     networks:
       - data_network
     restart: unless-stopped
@@ -496,6 +503,7 @@ services:
     depends_on:
       - trino
       - postgres
+      - fraud-detection-api
     ports:
       - "8501:8501"
     volumes:
@@ -516,6 +524,8 @@ services:
       - POSTGRES_DB=frauddb
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
+      # Fraud Detection API for predictions
+      - FRAUD_API_URL=http://fraud-detection-api:8000
     networks:
       - data_network
     restart: unless-stopped

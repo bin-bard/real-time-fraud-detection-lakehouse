@@ -86,7 +86,7 @@ def prepare_features(df):
         log_step("FEATURE_PREP", f"⚠️ WARNING: Missing features from Silver layer: {missing_features}")
         log_step("FEATURE_PREP", "These features will be skipped from training")
     
-    log_step("FEATURE_PREP", f"📊 Using {len(available_features)}/{len(feature_cols)} features")
+    log_step("FEATURE_PREP", f"📌 Using {len(available_features)}/{len(feature_cols)} features")
     log_step("FEATURE_PREP", f"Features: {', '.join(available_features[:10])}{'...' if len(available_features) > 10 else ''}")
     
     # Fill missing values with median (Kaggle approach)
@@ -185,7 +185,7 @@ def train_model(spark, model_name="RandomForest"):
         
         # Note: Removed amt filtering - using all valid transactions
         # Previous filter (amt >= 5 AND <= 1250) was too restrictive
-        log_step("DATA_FILTER", "📊 Using all transactions with amt > 0...")
+        log_step("DATA_FILTER", "💰 Using all transactions with amt > 0...")
         df = df.filter(col("amt") > 0)
         filtered_count = df.count()
         log_step("DATA_FILTER", f"After removing zero-amount: {filtered_count} records (removed {initial_count - filtered_count})")
@@ -328,9 +328,26 @@ def train_model(spark, model_name="RandomForest"):
             mlflow.log_metric("false_positives", fp)
             mlflow.log_metric("false_negatives", fn)
             
-            # Log model
+            # Log model với sample input để FastAPI load được
             log_step("MLFLOW", "Saving model to MLflow...")
-            mlflow.spark.log_model(model, "model", registered_model_name=f"fraud_detection_{model_name.lower()}")
+            
+            # Tạo sample input - Chỉ giữ feature columns (không có datetime, label, prediction)
+            # Lọc ra CHÍNH XÁC các columns có type không phải timestamp
+            from pyspark.sql.types import TimestampType, DateType
+            non_datetime_cols = [
+                field.name for field in test_df.schema.fields 
+                if not isinstance(field.dataType, (TimestampType, DateType))
+                and field.name not in ['label', 'features', 'features_raw', 'scaled_features', 'rawPrediction', 'probability', 'prediction']
+            ]
+            sample_df = test_df.select(non_datetime_cols).limit(1)
+            sample_data = sample_df.toPandas()
+            
+            mlflow.spark.log_model(
+                model, 
+                "model", 
+                registered_model_name=f"fraud_detection_{model_name.lower()}",
+                input_example=sample_data  # Use pandas DataFrame as input example
+            )
             log_step("MLFLOW", f"✅ Model registered: fraud_detection_{model_name.lower()}")
             
             # Get current run ID and model version
@@ -370,14 +387,14 @@ def train_model(spark, model_name="RandomForest"):
                     log_step("MLFLOW", f"⚠️ Auto-promotion failed: {str(e)}")
                     log_step("MLFLOW", "You can manually promote in MLflow UI: http://localhost:5000")
             else:
-                log_step("MLFLOW", f"📊 Model metrics below threshold for auto-promotion:")
+                log_step("MLFLOW", f"📉 Model metrics below threshold for auto-promotion:")
                 log_step("MLFLOW", f"   Current: Accuracy={accuracy:.4f}, F1={f1:.4f}, AUC={auc:.4f}")
                 log_step("MLFLOW", f"   Required: Accuracy>=0.90, F1>=0.85, AUC>=0.90")
                 log_step("MLFLOW", "   Manual promotion available in MLflow UI: http://localhost:5000")
             
             # Print results
             log_step("RESULTS", "=" * 60)
-            log_step("RESULTS", f"📊 Model Performance: {model_name}")
+            log_step("RESULTS", f"📈 Model Performance: {model_name}")
             log_step("RESULTS", "=" * 60)
             log_step("RESULTS", f"Accuracy:     {accuracy:.4f}")
             log_step("RESULTS", f"Precision:    {precision:.4f}")
@@ -405,7 +422,7 @@ def train_model(spark, model_name="RandomForest"):
 def train_all_models():
     """Train RandomForest and LogisticRegression models"""
     log_step("START", "=" * 60)
-    log_step("START", "🎯 Starting Fraud Detection Model Training")
+    log_step("START", "🚀 Starting Fraud Detection Model Training")
     log_step("START", "Models: RandomForest, LogisticRegression")
     log_step("START", "=" * 60)
     
@@ -446,7 +463,7 @@ def train_all_models():
             status = "✅ Success" if result["success"] else "❌ Failed"
             log_step("SUMMARY", f"  {result['model']}: {status}")
         log_step("SUMMARY", "=" * 60)
-        log_step("SUMMARY", "📊 Check MLflow UI: http://localhost:5000")
+        log_step("SUMMARY", "🔍 Check MLflow UI: http://localhost:5000")
 
 if __name__ == "__main__":
     train_all_models()

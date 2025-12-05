@@ -794,3 +794,37 @@ curl -X POST http://localhost:8000/predict \
 **Phiên bản tài liệu:** 6.0  
 **Cập nhật lần cuối:** 4 tháng 12, 2025  
 **Trạng thái:** ✅ Sẵn sàng Production
+
+---
+
+## Giải đáp thắc mắc về Gold Layer, Star Schema và Constraints
+
+**1. Gold Layer có phải là Data Warehouse không?**
+
+- Gold layer trong kiến trúc Lakehouse đóng vai trò như một Data Warehouse hiện đại: lưu trữ dữ liệu đã chuẩn hóa, tích hợp, phục vụ phân tích, BI, AI/ML.
+- Thiết kế theo mô hình Star Schema: một bảng fact lớn (fact_transactions) và nhiều bảng dimension (dim_customer, dim_merchant, dim_time, dim_location).
+- Các bảng/views tổng hợp (summary, analysis) tối ưu cho dashboard và truy vấn nhanh.
+
+**2. Gold Layer có phải là Star Schema không?**
+
+- Đúng! Thiết kế của Gold layer là Star Schema: một bảng fact, nhiều bảng dimension, các join logic dựa trên các key.
+
+**3. Tại sao không có ràng buộc (PK/FK/Unique) ở Gold Layer?**
+
+- Gold layer sử dụng Delta Lake/Parquet/Spark SQL nên KHÔNG có constraint vật lý (Primary Key, Foreign Key, Unique, Check) như các hệ quản trị cơ sở dữ liệu truyền thống.
+- Các ràng buộc được đảm bảo bằng logic ETL (dropDuplicates, validate schema, kiểm tra null, ...).
+- Khi truy vấn, các join vẫn dựa trên key logic, nhưng không enforce vật lý.
+
+**4. Warehouse hiện đại (trên lakehouse) thường không có constraint vật lý?**
+
+- Đúng! Đây là best practice của kiến trúc Lakehouse hiện đại:
+  - Tối ưu cho big data, analytic workload (OLAP), không phải transactional workload (OLTP).
+  - Constraints vật lý không scale tốt với dữ liệu lớn, làm chậm write.
+  - Data quality được đảm bảo bằng pipeline ETL, data validation, monitoring.
+
+**5. Nếu cần constraint vật lý (ACID, transactional):**
+
+- Có thể sync dữ liệu sang RDBMS (PostgreSQL, SQL Server) để phục vụ các use case đặc biệt.
+
+**Tóm lại:**
+Gold layer của dự án là warehouse hiện đại, thiết kế star schema, không có constraint vật lý là hoàn toàn đúng chuẩn Lakehouse!

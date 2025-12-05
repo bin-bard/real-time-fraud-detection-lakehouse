@@ -1,8 +1,23 @@
 # FastAPI Fraud Detection API with MLflow integration
 FROM python:3.10-slim
 
-# Install curl for healthcheck
-RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+# Install system dependencies and Java for PySpark
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    curl \
+    wget \
+    ca-certificates \
+    procps && \
+    mkdir -p /opt/java && \
+    cd /opt/java && \
+    wget -q https://github.com/adoptium/temurin11-binaries/releases/download/jdk-11.0.21%2B9/OpenJDK11U-jre_x64_linux_hotspot_11.0.21_9.tar.gz && \
+    tar -xzf OpenJDK11U-jre_x64_linux_hotspot_11.0.21_9.tar.gz && \
+    rm OpenJDK11U-jre_x64_linux_hotspot_11.0.21_9.tar.gz && \
+    rm -rf /var/lib/apt/lists/*
+
+# Set JAVA_HOME for PySpark
+ENV JAVA_HOME=/opt/java/jdk-11.0.21+9-jre
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
 
 WORKDIR /app
 
