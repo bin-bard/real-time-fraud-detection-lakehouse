@@ -411,10 +411,10 @@ def main():
     # Sidebar
     with st.sidebar:
         st.title("🕵️ Fraud Chatbot")
-        st.markdown("---")
         
         # API Key status
         if not GOOGLE_API_KEY:
+            st.markdown("---")
             st.error("❌ GOOGLE_API_KEY chưa cấu hình")
             st.info("Thêm vào docker-compose.yml:\n```yaml\nenvironment:\n  GOOGLE_API_KEY: AIzaSy...\n```")
         
@@ -452,9 +452,8 @@ def main():
                         delete_session(session_id)
                         st.rerun()
         
-        st.markdown("---")
-        
         # System Status - Combined
+        st.markdown("---")
         st.subheader("⚙️ System Status")
         
         # API & Model Status
@@ -507,7 +506,7 @@ def main():
         # Example queries
         with st.expander("💡 Câu hỏi mẫu"):
             st.markdown("""
-            **📊 SQL Analytics:**
+            **📑 SQL Analytics:**
             - Có bao nhiêu giao dịch gian lận hôm nay?
             - Top 5 bang có tỷ lệ gian lận cao nhất?
             - Merchant nào nguy hiểm nhất?
@@ -517,7 +516,6 @@ def main():
             - Dự đoán giao dịch $850 vào lúc 2h sáng
             - Check giao dịch $1200 xa 150km
             - Thông tin model chi tiết
-            - Lịch sử predictions gần đây
             - fraud_probability được tính như thế nào?
             
             **💬 General Questions:**
@@ -586,7 +584,12 @@ def main():
                     # CASE 0: FRAUD_PROBABILITY EXPLANATION
                     # ============================================================
                     if is_probability_question:
-                        answer = """### 🎯 Cách tính `fraud_probability` trong ML Model
+                        # Thêm delay cho realistic
+                        import time
+                        with st.spinner("💡 Đang tải giải thích..."):
+                            time.sleep(1.5)
+                        
+                        answer = """### ⚡ Cách tính `fraud_probability` trong ML Model
 
 `fraud_probability` là **xác suất gian lận** được tính bởi **sklearn RandomForest model**, KHÔNG phải từ SQL query.
 
@@ -670,7 +673,7 @@ ML model học **patterns** từ data để dự đoán giao dịch MỚI chưa 
 **Status:** {'✅ Production' if model_data.get('status') == 'production_ready' else '⚠️ ' + str(model_data.get('status', 'N/A'))}  
 **Features:** {model_data.get('features_count', 15)} features  
 
-**Performance:** {performance_rating} 🎯
+**Performance:** {performance_rating} ⚡
 - Accuracy: {acc:.1%} | F1: {f1:.1%} | AUC: {auc:.1%}
 - Recall: {perf.get('recall', 0):.1%} (phát hiện được {perf.get('recall', 0):.0%} fraud)
 - Precision: {perf.get('precision', 0):.1%} (chỉ {100-perf.get('precision', 0)*100:.1f}% nhầm)
@@ -712,10 +715,26 @@ ML model học **patterns** từ data để dự đoán giao dịch MỚI chưa 
                                 
                                 st.markdown(answer)
                                 sql_query = None
+                                
+                                # Save to database
+                                st.session_state.messages.append({
+                                    "role": "assistant",
+                                    "content": answer,
+                                    "sql_query": None
+                                })
+                                save_message(st.session_state.session_id, "assistant", answer)
                             else:
                                 answer = f"❌ Không thể lấy lịch sử: {result['error']}"
                                 st.error(answer)
                                 sql_query = None
+                                
+                                # Save error to database
+                                st.session_state.messages.append({
+                                    "role": "assistant",
+                                    "content": answer,
+                                    "sql_query": None
+                                })
+                                save_message(st.session_state.session_id, "assistant", answer)
                         
                         # Sub-case 1c: Actual prediction request
                         else:
@@ -740,6 +759,14 @@ ML model học **patterns** từ data để dự đoán giao dịch MỚI chưa 
 Bạn có thể cung cấp thêm thông tin được không?"""
                                     st.warning(answer)
                                     sql_query = None
+                                    
+                                    # Save to database
+                                    st.session_state.messages.append({
+                                        "role": "assistant",
+                                        "content": answer,
+                                        "sql_query": None
+                                    })
+                                    save_message(st.session_state.session_id, "assistant", answer)
                                 else:
                                     # Build full transaction features
                                     st.success(f"✅ Đã trích xuất: Số tiền ${extracted.get('amt')}, {extracted.get('hour', 'N/A')}h, {extracted.get('distance_km', 'N/A')}km")
@@ -819,10 +846,26 @@ Bạn có thể cung cấp thêm thông tin được không?"""
                                             st.json(pred_data.get('model_info', {}))
                                         
                                         sql_query = f"-- Prediction for: {transaction_features.get('trans_num')}\n-- Features: {json.dumps(extracted, indent=2)}"
+                                        
+                                        # Save to database
+                                        st.session_state.messages.append({
+                                            "role": "assistant",
+                                            "content": answer,
+                                            "sql_query": sql_query
+                                        })
+                                        save_message(st.session_state.session_id, "assistant", answer, sql_query)
                                     else:
                                         answer = f"❌ Lỗi dự đoán: {pred_result['error']}"
                                         st.error(answer)
                                         sql_query = None
+                                        
+                                        # Save error to database
+                                        st.session_state.messages.append({
+                                            "role": "assistant",
+                                            "content": answer,
+                                            "sql_query": None
+                                        })
+                                        save_message(st.session_state.session_id, "assistant", answer)
                             else:
                                 answer = f"""❌ Không thể phân tích câu hỏi: {extraction['error']}
 

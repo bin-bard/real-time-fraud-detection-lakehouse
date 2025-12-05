@@ -137,7 +137,9 @@ def explain_prediction(features: TransactionFeatures, prediction: int, probabili
     if prediction == 1:  # Fraud
         base = f"⚠️ **CẢNH BÁO GIAN LẬN** (Xác suất: {probability:.1%})"
         if reasons:
-            explanation = f"{base}\n\n**Lý do phát hiện:**\n• " + "\n• ".join(reasons)
+            # Format reasons with proper spacing
+            formatted_reasons = "\n".join([f"- {reason}" for reason in reasons])
+            explanation = f"{base}\n\n**Lý do phát hiện:**\n\n{formatted_reasons}"
         else:
             explanation = f"{base}\n\nModel phát hiện các đặc trưng bất thường trong giao dịch này."
     else:  # Normal
@@ -146,16 +148,16 @@ def explain_prediction(features: TransactionFeatures, prediction: int, probabili
         else:
             explanation = f"✅ **Giao dịch an toàn** (Nguy cơ gian lận: {probability:.1%})\n\nCác đặc điểm giao dịch nằm trong mức bình thường."
     
-    # Add transaction details
-    details = f"\n\n**Chi tiết giao dịch:**\n"
-    details += f"• Số tiền: ${features.amt:.2f}\n"
-    details += f"• Khoảng cách: {features.distance_km:.1f}km\n"
-    details += f"• Thời gian: {features.hour}h, {'cuối tuần' if features.is_weekend else 'ngày thường'}\n"
-    details += f"• Tuổi khách hàng: {features.age} tuổi\n"
+    # Add transaction details with proper spacing
+    details = f"\n\n**Chi tiết giao dịch:**\n\n"
+    details += f"- Số tiền: ${features.amt:.2f}\n"
+    details += f"- Khoảng cách: {features.distance_km:.1f}km\n"
+    details += f"- Thời gian: {features.hour}h, {'cuối tuần' if features.is_weekend else 'ngày thường'}\n"
+    details += f"- Tuổi khách hàng: {features.age} tuổi\n"
     if features.merchant:
-        details += f"• Merchant: {features.merchant}\n"
+        details += f"- Merchant: {features.merchant}\n"
     if features.category:
-        details += f"• Category: {features.category}\n"
+        details += f"- Category: {features.category}\n"
     
     return explanation + details
 
