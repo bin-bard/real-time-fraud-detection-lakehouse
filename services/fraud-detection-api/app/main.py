@@ -9,8 +9,6 @@ from datetime import datetime
 from mlflow.tracking import MlflowClient
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from pyspark.sql import SparkSession
-import pandas as pd
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -18,8 +16,8 @@ logger = logging.getLogger(__name__)
 
 # MLflow configuration
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
-MODEL_NAME = os.getenv("MODEL_NAME", "fraud_detection_randomforest")
-MODEL_STAGE = os.getenv("MODEL_STAGE", "None")  # Production, Staging, None
+MODEL_NAME = os.getenv("MODEL_NAME", "sklearn_fraud_randomforest")
+MODEL_STAGE = os.getenv("MODEL_STAGE", "Production")  # Production, Staging, None
 
 mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
 
@@ -34,7 +32,6 @@ POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "postgres")
 loaded_model = None
 model_version = None
 model_info = {}
-spark = None  # Global Spark session for PySpark models
 
 # Input schema for Sparkov features - ĐỊNH NGHĨA TRƯỚC
 class TransactionFeatures(BaseModel):
@@ -162,106 +159,73 @@ def explain_prediction(features: TransactionFeatures, prediction: int, probabili
     
     return explanation + details
 
-def init_spark_session():
-    """Initialize Spark session for PySpark models"""
-    global spark
-    
-    if spark is None:
-        try:
-            spark = SparkSession.builder \
-                .appName("FraudDetectionAPI") \
-                .config("spark.driver.memory", "2g") \
-                .config("spark.sql.shuffle.partitions", "4") \
-                .config("spark.ui.enabled", "false") \
-                .config("spark.hadoop.fs.s3a.endpoint", "http://minio:9000") \
-                .config("spark.hadoop.fs.s3a.access.key", "minio") \
-                .config("spark.hadoop.fs.s3a.secret.key", "minio123") \
-                .config("spark.hadoop.fs.s3a.path.style.access", "true") \
-                .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
-                .getOrCreate()
-            
-            spark.sparkContext.setLogLevel("ERROR")
-            logger.info("✅ Spark session initialized")
-        except Exception as e:
-            logger.warning(f"Failed to initialize Spark: {e}")
-            spark = None
-    
-    return spark
-
 def load_model_from_mlflow():
-    """Load latest model from MLflow"""
+    """
+    Load sklearn model from MLflow (much simpler than PySpark!)
+    """
     global loaded_model, model_version, model_info
     
     try:
-        # Initialize Spark session first (required for PySpark models)
-        init_spark_session()
         
         client = MlflowClient()
         
-        # Try to load from Model Registry first
+        # Get Production model version
         try:
-            if MODEL_STAGE != "None":
-                model_uri = f"models:/{MODEL_NAME}/{MODEL_STAGE}"
-                logger.info(f"Loading model from Registry: {model_uri}")
+            if MODEL_STAGE == "Production":
+                versions = client.search_model_versions(f"name='{MODEL_NAME}'")
+                prod_versions = [v for v in versions if v.current_stage == "Production"]
+                
+                if prod_versions:
+                    latest_prod = max(prod_versions, key=lambda x: int(x.version))
+                    run_id = latest_prod.run_id
+                    model_version = latest_prod.version
+                    logger.info(f"Found Production model: v{model_version}, run_id={run_id}")
+                else:
+                    raise Exception("No Production model found")
             else:
                 # Get latest version
                 versions = client.search_model_versions(f"name='{MODEL_NAME}'")
                 if versions:
                     latest_version = max(versions, key=lambda x: int(x.version))
-                    model_uri = f"models:/{MODEL_NAME}/{latest_version.version}"
+                    run_id = latest_version.run_id
                     model_version = latest_version.version
-                    logger.info(f"Loading model version {model_version}")
+                    logger.info(f"Found latest model: v{model_version}, run_id={run_id}")
                 else:
-                    raise Exception("No registered models found")
+                    raise Exception("No model versions found")
             
-            # Try loading as pyfunc first
+            # Load sklearn model directly from MLflow (simple!)
+            model_uri = f"runs:/{run_id}/model"
+            logger.info(f"📥 Loading sklearn model: {model_uri}")
+            
+            # sklearn models load easily with mlflow.sklearn or mlflow.pyfunc
+            loaded_model = mlflow.sklearn.load_model(model_uri)
+            
+            logger.info(f"✅ Sklearn model loaded successfully: {MODEL_NAME} v{model_version}")
+            
+            # Get model metrics
             try:
-                loaded_model = mlflow.pyfunc.load_model(model_uri)
-                logger.info("✅ Model loaded successfully from Model Registry (pyfunc)")
-            except Exception as pyfunc_error:
-                logger.warning(f"PyFunc load failed: {pyfunc_error}")
-                # Try loading as spark model directly
-                logger.info("Trying to load as Spark model...")
-                loaded_model = mlflow.spark.load_model(model_uri)
-                logger.info("✅ Model loaded successfully from Model Registry (spark)")
+                run_data = client.get_run(run_id)
+                model_info = {
+                    "model_name": MODEL_NAME,
+                    "model_version": model_version,
+                    "run_id": run_id,
+                    "accuracy": run_data.data.metrics.get("accuracy", 0),
+                    "precision": run_data.data.metrics.get("precision", 0),
+                    "recall": run_data.data.metrics.get("recall", 0),
+                    "f1_score": run_data.data.metrics.get("f1_score", 0),
+                    "auc": run_data.data.metrics.get("auc", 0)
+                }
+                logger.info(f"📊 Model metrics: Acc={model_info['accuracy']:.3f}, F1={model_info['f1_score']:.3f}, AUC={model_info['auc']:.3f}")
+            except Exception as info_error:
+                logger.warning(f"Could not fetch model metrics: {info_error}")
+                model_info = {"model_name": MODEL_NAME, "model_version": model_version, "run_id": run_id}
+            
+            return True
             
         except Exception as e:
-            # Fallback: Load latest run from experiment
-            logger.warning(f"Model Registry load failed: {e}")
-            logger.info("Trying to load from latest experiment run...")
-            
-            experiment = client.get_experiment_by_name("fraud_detection_production")
-            if not experiment:
-                raise Exception("Experiment 'fraud_detection_production' not found")
-            
-            runs = client.search_runs(
-                experiment_ids=[experiment.experiment_id],
-                filter_string="tags.model_type='RandomForest'",
-                order_by=["start_time DESC"],
-                max_results=1
-            )
-            
-            if not runs:
-                raise Exception("No training runs found")
-            
-            run = runs[0]
-            model_uri = f"runs:/{run.info.run_id}/model"
-            loaded_model = mlflow.pyfunc.load_model(model_uri)
-            model_version = run.info.run_id[:8]
-            
-            # Get metrics
-            model_info = {
-                "run_id": run.info.run_id,
-                "accuracy": run.data.metrics.get("accuracy", 0),
-                "precision": run.data.metrics.get("precision", 0),
-                "recall": run.data.metrics.get("recall", 0),
-                "f1_score": run.data.metrics.get("f1_score", 0),
-                "auc": run.data.metrics.get("auc", 0)
-            }
-            
-            logger.info(f"✅ Model loaded from run {model_version}")
-        
-        return True
+            logger.error(f"❌ Model load failed: {e}")
+            logger.info("Will use rule-based prediction as fallback")
+            return False
         
     except Exception as e:
         logger.error(f"❌ Failed to load model from MLflow: {e}")
@@ -339,45 +303,37 @@ async def predict_fraud(features: TransactionFeatures):
         if loaded_model is not None:
             # Use MLflow model
             try:
-                # Prepare input data - support both Spark and sklearn models
-                feature_dict = {
-                    "amt": features.amt,
-                    "log_amount": features.log_amount,
-                    "is_zero_amount": features.is_zero_amount,
-                    "is_high_amount": features.is_high_amount,
-                    "amount_bin": features.amount_bin,
-                    "distance_km": features.distance_km,
-                    "is_distant_transaction": features.is_distant_transaction,
-                    "age": features.age,
-                    "gender_encoded": features.gender_encoded,
-                    "hour": features.hour,
-                    "day_of_week": features.day_of_week,
-                    "is_weekend": features.is_weekend,
-                    "is_late_night": features.is_late_night,
-                    "hour_sin": features.hour_sin,
-                    "hour_cos": features.hour_cos,
-                }
+                # Prepare input data - sklearn expects numpy array
+                feature_values = [
+                    features.amt,
+                    features.log_amount,
+                    features.is_zero_amount,
+                    features.is_high_amount,
+                    features.amount_bin,
+                    features.distance_km,
+                    features.is_distant_transaction,
+                    features.age,
+                    features.gender_encoded,
+                    features.hour,
+                    features.day_of_week,
+                    features.is_weekend,
+                    features.is_late_night,
+                    features.hour_sin,
+                    features.hour_cos,
+                ]
                 
-                # Try Spark model first (if spark is initialized)
-                if spark is not None and hasattr(loaded_model, 'transform'):
-                    # Spark model - use DataFrame
-                    df = spark.createDataFrame([feature_dict])
-                    predictions = loaded_model.transform(df)
-                    result = predictions.select("prediction", "probability").collect()[0]
-                    is_fraud = int(result["prediction"])
-                    fraud_probability = float(result["probability"][1])  # Probability of class 1
-                else:
-                    # PyFunc model - use pandas DataFrame (safer than numpy for MLflow)
-                    input_df = pd.DataFrame([feature_dict])
-                    prediction = loaded_model.predict(input_df)
-                    is_fraud = int(prediction[0])
-                    
-                    # Try to get probability
-                    try:
-                        proba = loaded_model.predict_proba(input_df)
-                        fraud_probability = float(proba[0][1]) if len(proba[0]) > 1 else float(is_fraud)
-                    except:
-                        fraud_probability = float(is_fraud)
+                # Reshape for sklearn (expects 2D array)
+                X = np.array(feature_values).reshape(1, -1)
+                
+                # Predict
+                is_fraud = int(loaded_model.predict(X)[0])
+                
+                # Get probability if available
+                try:
+                    proba = loaded_model.predict_proba(X)[0]
+                    fraud_probability = float(proba[1])  # Probability of fraud (class 1)
+                except:
+                    fraud_probability = float(is_fraud)  # Fallback to binary prediction
                 
                 model_ver = f"mlflow_{model_version}"
                 logger.info(f"✅ MLflow prediction successful: fraud={is_fraud}, prob={fraud_probability:.3f}")
