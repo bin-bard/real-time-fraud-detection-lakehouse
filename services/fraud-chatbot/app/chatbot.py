@@ -449,7 +449,7 @@ def main():
         st.markdown("---")
         
         # Fraud Detection API status
-        st.subheader("🤖 Fraud Detection API")
+        st.subheader("Fraud Detection API")
         api_status = get_fraud_api_status()
         if api_status["status"] == "healthy":
             st.success(f"✅ API Connected")
@@ -518,6 +518,7 @@ def main():
             - Check giao dịch $1200 xa 150km
             - Xem thông tin model hiện tại
             - Lịch sử predictions gần đây
+            - fraud_probability được tính như thế nào?
             
             **💬 General Questions:**
             - Gian lận tài chính là gì?
