@@ -13,8 +13,8 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application
-COPY app/ ./app/
+# Copy application (NEW: src/ instead of app/)
+COPY src/ ./src/
 
 # Expose Streamlit port
 EXPOSE 8501
@@ -23,5 +23,5 @@ EXPOSE 8501
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8501/_stcore/health || exit 1
 
-# Run Streamlit
-CMD ["streamlit", "run", "app/chatbot.py", "--server.port=8501", "--server.address=0.0.0.0"]
+# Run Streamlit (NEW: src/main.py)
+CMD ["streamlit", "run", "src/main.py", "--server.port=8501", "--server.address=0.0.0.0"]

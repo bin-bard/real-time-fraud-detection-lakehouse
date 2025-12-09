@@ -63,14 +63,31 @@ CREATE INDEX idx_transactions_amt ON transactions(amt);
 CREATE INDEX idx_fraud_analysis ON transactions(is_fraud, trans_date_trans_time, amt);
 
 -- Bảng để lưu fraud predictions từ ML model (optional - cho real-time scoring)
+-- FIX: Thêm UNIQUE constraint trên trans_num để tránh duplicate
 CREATE TABLE IF NOT EXISTS fraud_predictions (
     id SERIAL PRIMARY KEY,
-    trans_num VARCHAR(100) REFERENCES transactions(trans_num),
+    trans_num VARCHAR(100) UNIQUE NOT NULL,  -- FIX: UNIQUE để tránh duplicate
     prediction_score NUMERIC(5, 4),
     is_fraud_predicted SMALLINT,
     model_version VARCHAR(50),
     prediction_time TIMESTAMP DEFAULT NOW()
 );
+
+-- Index để query nhanh
+CREATE INDEX IF NOT EXISTS idx_fraud_predictions_time ON fraud_predictions(prediction_time DESC);
+
+-- Bảng chat_history cho chatbot (v2.0)
+CREATE TABLE IF NOT EXISTS chat_history (
+    id SERIAL PRIMARY KEY,
+    session_id VARCHAR(100) NOT NULL,
+    role VARCHAR(20) NOT NULL,  -- 'user' or 'assistant'
+    message TEXT NOT NULL,
+    sql_query TEXT,  -- SQL query được sinh ra (nếu có)
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_history_session ON chat_history(session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_chat_history_created ON chat_history(created_at);
 
 -- Bảng checkpoint cho data producer (tracking CSV processing progress)
 CREATE TABLE IF NOT EXISTS producer_checkpoint (

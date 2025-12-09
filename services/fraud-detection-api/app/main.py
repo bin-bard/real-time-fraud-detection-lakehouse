@@ -82,22 +82,39 @@ def get_postgres_conn():
         return None
 
 def save_prediction_to_db(trans_num: str, prediction: int, probability: float, model_ver: str):
-    """Save prediction to fraud_predictions table"""
+    """
+    Save prediction to fraud_predictions table
+    FIX: Đảm bảo LUÔN lưu vào fraud_predictions với ON CONFLICT
+    """
     try:
         conn = get_postgres_conn()
         if not conn:
-            logger.warning("PostgreSQL connection not available, skipping save")
+            logger.error("❌ PostgreSQL connection failed - Prediction NOT saved!")
             return False
             
         cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO fraud_predictions (trans_num, prediction_score, is_fraud_predicted, model_version)
-            VALUES (%s, %s, %s, %s)
-        """, (trans_num, probability, prediction, model_ver))
+        
+        # FIX: Sử dụng INSERT ... ON CONFLICT DO UPDATE để tránh duplicate
+        insert_sql = """
+            INSERT INTO fraud_predictions (trans_num, prediction_score, is_fraud_predicted, model_version, prediction_time)
+            VALUES (%s, %s, %s, %s, NOW())
+            ON CONFLICT (trans_num) 
+            DO UPDATE SET 
+                prediction_score = EXCLUDED.prediction_score,
+                is_fraud_predicted = EXCLUDED.is_fraud_predicted,
+                model_version = EXCLUDED.model_version,
+                prediction_time = NOW()
+        """
+        
+        cur.execute(insert_sql, (trans_num, float(probability), int(prediction), model_ver))
         conn.commit()
         cur.close()
         conn.close()
         logger.info(f"✅ Saved prediction for {trans_num}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Failed to save prediction: {str(e)}")
+        return False
         return True
     except Exception as e:
         logger.error(f"Failed to save prediction: {e}")
