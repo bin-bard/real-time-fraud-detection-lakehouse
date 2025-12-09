@@ -77,7 +77,10 @@ TOOL NAMES: {tool_names}
   * state_summary: state, total_transactions, fraud_transactions, fraud_rate
   * fraud_predictions: trans_num, is_fraud_predicted, fraud_probability, model_version (thông tin model)
 - Nếu query lỗi COLUMN_NOT_FOUND → Dùng DESCRIBE <table> để xem schema chính xác
-- **FINAL ANSWER phải ngắn gọn, dễ hiểu (2-3 câu), có insight/nhận xét**
+- **FINAL ANSWER:**
+  * Với PredictFraud: TRẢ NGUYÊN VĂN output từ tool (giữ nguyên format markdown với emoji, tables)
+  * Với QueryDatabase: Tóm tắt ngắn gọn kèm insight
+  * KHÔNG viết lại hay tóm tắt output của PredictFraud
 - Format kết quả bằng TIẾNG VIỆT
 - Với số tiền, dùng format: $XXX,XXX.XX
 - Với phần trăm, dùng: XX.X%
