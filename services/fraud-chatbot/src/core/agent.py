@@ -66,6 +66,10 @@ TOOL NAMES: {tool_names}
 **Lưu ý quan trọng:**
 - SQL queries phải hợp lệ Trino syntax
 - Ưu tiên dùng bảng pre-aggregated (state_summary, merchant_analysis) để nhanh
+- **Schema thường dùng:**
+  * merchant_analysis: merchant, merchant_category, total_transactions, fraud_transactions, avg_amount, fraud_rate
+  * state_summary: state, total_transactions, fraud_transactions, fraud_rate
+- Nếu query lỗi COLUMN_NOT_FOUND → Dùng DESCRIBE <table> để xem schema chính xác
 - Format kết quả bằng TIẾNG VIỆT, dễ đọc
 - Với số tiền, dùng format: $XXX,XXX.XX
 - Với phần trăm, dùng: XX.X%
@@ -102,7 +106,8 @@ Final Answer: [Câu trả lời đầy đủ bằng tiếng Việt, format đẹ
         tools=tools,
         verbose=True,
         handle_parsing_errors=True,
-        max_iterations=5,
+        max_iterations=8,  # Tăng để xử lý câu hỏi phức tạp
+        early_stopping_method="generate",  # Generate answer khi hết iteration
         return_intermediate_steps=True
     )
     
