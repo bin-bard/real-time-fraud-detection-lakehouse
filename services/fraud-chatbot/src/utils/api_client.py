@@ -47,7 +47,7 @@ def predict_batch_api(transactions: List[dict]) -> Dict:
     try:
         response = requests.post(
             f"{FRAUD_API_URL}/predict/batch",
-            json={"transactions": transactions},
+            json=transactions,  # API expects list directly, not wrapped in {"transactions": ...}
             timeout=60
         )
         response.raise_for_status()

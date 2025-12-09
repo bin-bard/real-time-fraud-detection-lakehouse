@@ -15,6 +15,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from core.tools import create_database_tool, create_prediction_tool
+from core.config import GEMINI_MODEL_NAME, GEMINI_MAX_RETRIES, GEMINI_REQUEST_TIMEOUT
 
 @st.cache_resource
 def get_fraud_detection_agent() -> AgentExecutor:
@@ -22,18 +23,18 @@ def get_fraud_detection_agent() -> AgentExecutor:
     
     # LLM - Gemini với retry limit
     llm = ChatGoogleGenerativeAI(
-        model="gemini-2.5-flash-lite",
+        model=GEMINI_MODEL_NAME,  # Centralized config
         temperature=0,
         google_api_key=os.getenv("GOOGLE_API_KEY", ""),
         convert_system_message_to_human=True,
-        max_retries=2,  # Giới hạn retry để không bị vòng lặp vô hạn
-        request_timeout=30  # Timeout sau 30s
+        max_retries=GEMINI_MAX_RETRIES,
+        request_timeout=GEMINI_REQUEST_TIMEOUT
     )
     
-    # Tools
+    # Tools (pass LLM to prediction tool for AI insights)
     tools = [
         create_database_tool(),
-        create_prediction_tool()
+        create_prediction_tool(llm)
     ]
     
     # Prompt template (ReAct format) - TIẾNG VIỆT

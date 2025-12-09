@@ -40,31 +40,32 @@ def render_prediction_details(data: Dict):
         "HIGH": "🔴"
     }.get(risk_level, "⚪")
     
-    # Display metrics
-    st.markdown(f"### {risk_emoji} Chi tiết dự đoán")
-    
-    # Fallback warning
-    if is_fallback:
-        st.warning("⚠️ ML Model không khả dụng. Sử dụng rule-based fallback (dựa trên amt + time).")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.metric("Risk Level", risk_level)
-    with col2:
-        st.metric("Probability", f"{probability:.1%}")
-    with col3:
-        model_label = "Rule-based" if is_fallback else data.get("model_version", "N/A")
-        st.metric("Model", model_label)
-    
-    # Explanation
-    if "explanation" in data:
-        st.markdown("**💬 Giải thích:**")
-        st.info(data["explanation"])
-    
-    # Model info - COLLAPSED by default
-    if "model_info" in data and not is_fallback:
-        with st.expander("⚙️ Model Details", expanded=False):
+    # Display details in expander - summary already shown above
+    with st.expander(f"{risk_emoji} Chi tiết dự đoán", expanded=False):
+        
+        # Fallback warning
+        if is_fallback:
+            st.warning("⚠️ ML Model không khả dụng. Sử dụng rule-based fallback (dựa trên amt + time).")
+        
+        # Explanation - compact displayplay
+        if "explanation" in data and data["explanation"]:
+            # Extract key points only (skip duplicate headers)
+            explanation = data["explanation"]
+            # Skip lines with emoji headers and duplicate info
+            lines = [line.strip() for line in explanation.split('\n') 
+                    if line.strip() and not line.startswith('⚠️') and not line.startswith('✅') 
+                    and 'Model phát hiện' not in line and 'Giao dịch an toàn' not in line]
+            
+            if lines:
+                st.markdown("**💡 Phân tích:**")
+                for line in lines[:5]:  # Max 5 lines
+                    if line.startswith('-') or line.startswith('•'):
+                        st.caption(line)
+        
+        # Model info
+        if "model_info" in data and not is_fallback:
+            st.markdown("---")
+            st.markdown("**⚙️ Model Metrics:**")
             st.json(data["model_info"])
 
 def render_thinking_process(steps):

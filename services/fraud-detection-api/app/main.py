@@ -407,6 +407,10 @@ async def predict_with_explanation(features: TransactionFeatures):
     - Giải thích lý do tại sao giao dịch bị đánh dấu gian lận
     - Lưu kết quả vào database
     - Cung cấp thông tin model (metrics, parameters)
+    
+    NOTE: Endpoint này trả về explanation text (Vietnamese) cho chatbot.
+    Nếu chỉ cần kết quả ngắn gọn, dùng /predict endpoint.
+    Gemini AI insights (nếu có) được thêm ở chatbot layer, không phải API này.
     """
     try:
         if loaded_model is None:

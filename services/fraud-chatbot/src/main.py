@@ -85,17 +85,15 @@ def main():
         risk_emoji_map = {"LOW": "🟢", "MEDIUM": "🟡", "HIGH": "🔴"}
         risk_emoji = risk_emoji_map.get(result.get('risk_level', ''), "⚪")
         
+        # Simple summary - details shown in expander
         prediction_msg = {
             "role": "assistant",
             "content": f"""
-{fraud_icon} **Manual Prediction Result:**
+{fraud_icon} **Manual Prediction Result**
 
-- **Fraud:** {'CÓ' if result.get('is_fraud_predicted') == 1 else 'KHÔNG'}
-- **Probability:** {result.get('fraud_probability', 0):.1%}
-- **Risk Level:** {risk_emoji} {result.get('risk_level', 'UNKNOWN')}
-
-**Giải thích:**
-{result.get('explanation', 'Không có giải thích')}
+**Kết quả:** {'GIAN LẬN' if result.get('is_fraud_predicted') == 1 else 'AN TOÀN'}  
+**Risk Level:** {risk_emoji} {result.get('risk_level', 'UNKNOWN')} ({result.get('fraud_probability', 0):.1%})  
+**Model:** {result.get('model_version', 'N/A')}
             """,
             "prediction_data": result
         }

@@ -69,21 +69,31 @@ def render_api_status():
                 test_trino_db()
 
 def test_gemini_connection(api_key: str):
-    """Test Gemini API connection"""
+    """Test Gemini API connection - Direct API call"""
     with st.spinner("Testing..."):
         try:
-            from langchain_google_genai import ChatGoogleGenerativeAI
-            llm = ChatGoogleGenerativeAI(
-                model="gemini-2.5-flash-lite",
-                temperature=0,
-                google_api_key=api_key,
-                convert_system_message_to_human=True
+            import google.generativeai as genai
+            from core.config import GEMINI_MODEL_NAME, GEMINI_TEST_TIMEOUT
+            
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel(GEMINI_MODEL_NAME)
+            
+            # Quick test with timeout
+            response = model.generate_content(
+                "Say 'OK' if you can read this.",
+                request_options={"timeout": GEMINI_TEST_TIMEOUT}
             )
-            response = llm.invoke("Hello")
-            st.success("✅ Gemini hoạt động tốt!")
-            st.caption(f"Response: {response.content[:100]}...")
+            
+            st.success("✅ Gemini API hoạt động!")
+            st.caption(f"Model: {GEMINI_MODEL_NAME}")
         except Exception as e:
-            st.error(f"❌ Lỗi: {str(e)[:100]}")
+            error_msg = str(e)
+            if "429" in error_msg or "quota" in error_msg.lower():
+                st.warning("⚠️ Quota exceeded (20 requests/day). API vẫn hoạt động nhưng hết quota.")
+            elif "timeout" in error_msg.lower():
+                st.error("❌ Timeout - API quá chậm")
+            else:
+                st.error(f"❌ Lỗi: {error_msg[:150]}")
 
 def show_model_info():
     """Show model information"""

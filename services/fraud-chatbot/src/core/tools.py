@@ -92,8 +92,36 @@ Ví dụ queries:
         """
     )
 
-def create_prediction_tool():
-    """Công cụ dự đoán gian lận"""
+def get_ai_insight(prediction_result: dict, llm=None) -> str:
+    """Generate AI insight using Gemini if available"""
+    if not llm:
+        return ""  # No LLM, skip insights
+    
+    try:
+        is_fraud = prediction_result.get('is_fraud')
+        probability = prediction_result.get('probability', 0)
+        amt = prediction_result.get('amt', 0)
+        hour = prediction_result.get('hour', 12)
+        distance = prediction_result.get('distance', 0)
+        
+        prompt = f"""
+Phân tích giao dịch tài chính:
+- Kết quả model: {'GIAN LẬN' if is_fraud else 'AN TOÀN'}
+- Xác suất gian lận: {probability:.1%}
+- Số tiền: ${amt}
+- Thời gian: {hour}h
+- Khoảng cách: {distance}km
+
+Hãy đưa ra 2-3 lý do CHÍNH tại sao model đánh giá như vậy (ngắn gọn, mỗi lý do 1 dòng).
+"""
+        
+        response = llm.invoke(prompt)
+        return f"\n\n🤖 **AI Insights:**\n{response.content}"
+    except:
+        return ""  # Quota exceeded or timeout, skip insights
+
+def create_prediction_tool(llm=None):
+    """Công cụ dự đoán gian lận với AI insights"""
     
     def predict_fraud(amt: float, hour: int = None, distance_km: float = None, 
                      merchant: str = None, category: str = None, age: int = None) -> str:
@@ -126,18 +154,34 @@ def create_prediction_tool():
         
         if result["success"]:
             data = result["data"]
-            fraud_icon = "⚠️" if data['is_fraud_predicted'] == 1 else "✅"
-            risk_emoji_map = {"LOW": "🟢", "MEDIUM": "🟡", "HIGH": "🔴"}
-            risk_emoji = risk_emoji_map.get(data['risk_level'], "⚪")
+            is_fraud = data.get('is_fraud_predicted', 0)
+            probability = data.get('fraud_probability', 0)
+            risk = data.get('risk_level', 'UNKNOWN')
+            model_ver = data.get('model_version', 'N/A')
+            
+            # Risk emoji
+            risk_emoji = {"LOW": "🟢", "MEDIUM": "🟡", "HIGH": "🔴"}.get(risk, "⚪")
+            
+            # AI insights (only if using ML model and LLM available)
+            ai_insight = ""
+            if llm and "mlflow" in model_ver.lower():
+                ai_insight = get_ai_insight({
+                    'is_fraud': is_fraud,
+                    'probability': probability,
+                    'amt': amt,
+                    'hour': hour or 12,
+                    'distance': distance_km or 10
+                }, llm)
             
             return f"""
-{fraud_icon} Kết quả dự đoán:
-- Fraud: {'CÓ' if data['is_fraud_predicted'] == 1 else 'KHÔNG'}
-- Probability: {data['fraud_probability']:.1%}
-- Risk Level: {risk_emoji} {data['risk_level']}
+✅ **Kết quả dự đoán**
 
-{data.get('explanation', '')}
-            """
+Giao dịch ${amt:.2f}:
+- **Fraud:** {'CÓ' if is_fraud == 1 else 'KHÔNG'}
+- **Xác suất:** {probability:.1%}
+- **Risk Level:** {risk_emoji} {risk}
+- **Model:** {model_ver}{ai_insight}
+"""
         else:
             return f"❌ Lỗi prediction: {result['error']}"
     

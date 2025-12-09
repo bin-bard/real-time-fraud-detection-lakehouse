@@ -97,8 +97,27 @@ nano .env     # Linux/Mac
 
 **Bước 3: Dán API key vào `.env`**
 
-```bash
+```env
 GOOGLE_API_KEY=AIzaSyXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+
+# Tùy chọn: Thay đổi Gemini model (mặc định: gemini-2.5-flash-lite)
+# GEMINI_MODEL_NAME=gemini-2.5-flash-lite  # Fast, cheap, 20 req/day free
+# GEMINI_MODEL_NAME=gemini-2.0-flash-exp   # Balanced, experimental
+# GEMINI_MODEL_NAME=gemini-1.5-pro         # Most capable, slower
+```
+
+**Cách đổi model Gemini:**
+
+Chỉnh sửa `.env`:
+
+```env
+GEMINI_MODEL_NAME=gemini-2.0-flash-exp
+```
+
+Sau đó restart chatbot:
+
+```bash
+docker-compose restart fraud-chatbot
 ```
 
 **Lưu ý:** Nếu không dùng Chatbot, có thể bỏ qua bước này.
@@ -560,7 +579,6 @@ docker exec -it trino trino --server localhost:8081
    ```
 
 5. **`amount_summary`** - Fraud rate theo khoảng tiền
-
 6. **`latest_metrics`** - Real-time metrics cho monitoring
 
    ```sql
@@ -569,9 +587,7 @@ docker exec -it trino trino --server localhost:8081
    ```
 
 7. **`fraud_patterns`** - Top fraud patterns
-
 8. **`merchant_analysis`** - Merchants nguy hiểm nhất
-
 9. **`time_period_analysis`** - Fraud rate theo Morning/Afternoon/Evening/Night
 
 **Sử dụng trong Metabase:**
@@ -832,20 +848,3 @@ docker compose up -d --build
 
 - **[PROJECT_SPECIFICATION.md](docs/PROJECT_SPECIFICATION.md)** - Đặc tả chi tiết kiến trúc, luồng dữ liệu, yêu cầu
 - **[CHANGELOG.md](docs/CHANGELOG.md)** - Lịch sử cập nhật, lỗi đã sửa, câu hỏi thường gặp
-
-## 📝 Giấy phép
-
-**Giấy phép MIT (MIT License)**
-
-Copyright (c) 2025 Nhóm 6 - GVHD: ThS. Phan Thị Thể
-
-Giấy phép này cho phép bất kỳ ai có được bản sao của phần mềm và tài liệu liên quan ("Phần mềm") được phép sử dụng Phần mềm mà không bị hạn chế, bao gồm nhưng không giới hạn quyền sử dụng, sao chép, sửa đổi, hợp nhất, xuất bản, phân phối, cấp phép con và/hoặc bán các bản sao của Phần mềm, với các điều kiện sau:
-
-Thông báo bản quyền trên và thông báo giấy phép này phải được bao gồm trong tất cả các bản sao hoặc phần quan trọng của Phần mềm.
-
-PHẦN MỀM ĐƯỢC CUNG CẤP "NGUYÊN TRẠNG", KHÔNG CÓ BẢO HÀNH DƯỚI BẤT KỲ HÌNH THỨC NÀO, RÕ RÀNG HOẶC NGỤ Ý, BAO GỒM NHƯNG KHÔNG GIỚI HẠN BẢO HÀNH VỀ KHẢ NĂNG THƯƠNG MẠI, PHÙ HỢP CHO MỘT MỤC ĐÍCH CỤ THỂ VÀ KHÔNG VI PHẠM. TRONG BẤT KỲ TRƯỜNG HỢP NÀO, TÁC GIẢ HOẶC CHỦ SỞ HỮU BẢN QUYỀN KHÔNG CHỊU TRÁCH NHIỆM VỀ BẤT KỲ YÊU CẦU, THIỆT HẠI HOẶC TRÁCH NHIỆM PHÁP LÝ NÀO.
-
-## 👥 Thành viên nhóm
-
-- Nguyễn Thanh Tài - 22133049
-- Võ Triệu Phúc - 22133043
