@@ -26,7 +26,6 @@ def get_fraud_detection_agent() -> AgentExecutor:
         model=GEMINI_MODEL_NAME,  # Centralized config
         temperature=0,
         google_api_key=os.getenv("GOOGLE_API_KEY", ""),
-        convert_system_message_to_human=True,
         max_retries=GEMINI_MAX_RETRIES,
         request_timeout=GEMINI_REQUEST_TIMEOUT
     )
@@ -53,15 +52,22 @@ TOOL NAMES: {tool_names}
 
 **Hướng dẫn sử dụng:**
 
-- Nếu câu hỏi về **dữ liệu lịch sử** (top X, fraud rate, trends...) → Dùng QueryDatabase
+- Nếu câu hỏi về **dữ liệu lịch sử** (top X, fraud rate, trends, thông tin model...) → Dùng QueryDatabase
 - Nếu câu hỏi về **giao dịch cụ thể** (dự đoán, kiểm tra...) → Dùng PredictFraud
 - Câu hỏi **phức hợp** → Dùng cả 2 tools theo thứ tự logic
 - Câu hỏi **tổng quát** về fraud (định nghĩa, pattern...) → Trả lời trực tiếp không cần tool
 
 **Ví dụ câu phức hợp:**
 "Check giao dịch $500 và so sánh với fraud rate trung bình của merchant đó"
-→ Bước 1: PredictFraud(amt=500)
+→ Bước 1: PredictFraud(amt=500.0)
 → Bước 2: QueryDatabase("SELECT AVG(fraud_rate) FROM merchant_analysis WHERE merchant = '...'")
+
+**Parsing user input cho PredictFraud:**
+- "Dự đoán giao dịch $850 lúc 2h sáng" → PredictFraud(amt=850, hour=2)
+- "Check giao dịch $1200 xa 150km" → PredictFraud(amt=1200, distance_km=150)
+- **QUAN TRỌNG:** amt phải là số (int hoặc float), KHÔNG phải string "$850"
+- Ví dụ ĐÚNG: PredictFraud(amt=850, hour=2)
+- Ví dụ SAI: PredictFraud(amt="$850", hour="2h")
 
 **Lưu ý quan trọng:**
 - SQL queries phải hợp lệ Trino syntax
@@ -69,8 +75,10 @@ TOOL NAMES: {tool_names}
 - **Schema thường dùng:**
   * merchant_analysis: merchant, merchant_category, total_transactions, fraud_transactions, avg_amount, fraud_rate
   * state_summary: state, total_transactions, fraud_transactions, fraud_rate
+  * fraud_predictions: trans_num, is_fraud_predicted, fraud_probability, model_version (thông tin model)
 - Nếu query lỗi COLUMN_NOT_FOUND → Dùng DESCRIBE <table> để xem schema chính xác
-- Format kết quả bằng TIẾNG VIỆT, dễ đọc
+- **FINAL ANSWER phải ngắn gọn, dễ hiểu (2-3 câu), có insight/nhận xét**
+- Format kết quả bằng TIẾNG VIỆT
 - Với số tiền, dùng format: $XXX,XXX.XX
 - Với phần trăm, dùng: XX.X%
 
@@ -106,8 +114,8 @@ Final Answer: [Câu trả lời đầy đủ bằng tiếng Việt, format đẹ
         tools=tools,
         verbose=True,
         handle_parsing_errors=True,
-        max_iterations=8,  # Tăng để xử lý câu hỏi phức tạp
-        early_stopping_method="generate",  # Generate answer khi hết iteration
+        max_iterations=15,  # Tăng lên để xử lý câu hỏi phức tạp và retry
+        max_execution_time=60,  # Timeout 60s để tránh loop vô hạn
         return_intermediate_steps=True
     )
     

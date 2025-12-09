@@ -4,11 +4,12 @@ LangChain Tools cho Fraud Detection Agent
 - PredictFraudTool: Dự đoán fraud bằng ML model
 """
 
-from langchain.tools import Tool
+from langchain.tools import Tool, StructuredTool
 from langchain.pydantic_v1 import BaseModel, Field
-from typing import Optional
+from typing import Optional, Union, Dict, Any
 import pandas as pd
 import math
+import json
 
 # Import từ modules khác
 import sys
@@ -22,14 +23,8 @@ class QueryDatabaseInput(BaseModel):
     """Input cho QueryDatabaseTool"""
     sql_query: str = Field(description="SQL query cần thực thi trên Trino")
 
-class PredictFraudInput(BaseModel):
-    """Input cho PredictFraudTool"""
-    amt: float = Field(description="Số tiền giao dịch (USD)")
-    hour: Optional[int] = Field(None, description="Giờ giao dịch (0-23)")
-    distance_km: Optional[float] = Field(None, description="Khoảng cách từ địa chỉ khách hàng (km)")
-    merchant: Optional[str] = Field(None, description="Tên merchant")
-    category: Optional[str] = Field(None, description="Loại giao dịch")
-    age: Optional[int] = Field(None, description="Tuổi khách hàng")
+# Không dùng Pydantic schema cho PredictFraud vì LangChain sẽ validate sai
+# Thay vào đó dùng infer_schema=True trong StructuredTool
 
 def create_database_tool():
     """Công cụ truy vấn database"""
@@ -74,6 +69,7 @@ Sử dụng khi cần:
 - Phân tích dữ liệu thống kê (fraud rate, top merchants, trends...)
 - Đếm số lượng, tính tổng, trung bình
 - Lấy thông tin lịch sử từ fact_transactions, dim_customer, dim_merchant
+- Xem thông tin model: fraud_predictions table có model_version, fraud_probability
 
 Bảng quan trọng (ƯU TIÊN dùng bảng pre-aggregated để NHANH):
 - state_summary: Fraud rate theo bang (pre-aggregated - NHANH)
@@ -112,20 +108,63 @@ Phân tích giao dịch tài chính:
 - Thời gian: {hour}h
 - Khoảng cách: {distance}km
 
-Hãy đưa ra 2-3 lý do CHÍNH tại sao model đánh giá như vậy (ngắn gọn, mỗi lý do 1 dòng).
+Viết 2-3 dòng insight ngắn gọn (tiếng Việt) về giao dịch này.
 """
         
-        response = llm.invoke(prompt)
-        return f"\n\n🤖 **AI Insights:**\n{response.content}"
-    except:
-        return ""  # Quota exceeded or timeout, skip insights
+        from langchain.schema import HumanMessage
+        response = llm.invoke([HumanMessage(content=prompt)])
+        return f"\n\n💡 **AI Insight:**\n{response.content.strip()}"
+        
+    except Exception as e:
+        return ""  # Fail silently
 
 def create_prediction_tool(llm=None):
     """Công cụ dự đoán gian lận với AI insights"""
     
-    def predict_fraud(amt: float, hour: int = None, distance_km: float = None, 
-                     merchant: str = None, category: str = None, age: int = None) -> str:
-        """Dự đoán giao dịch có gian lận không"""
+    def predict_fraud(
+        amt: Union[float, str] = None,
+        hour: Optional[int] = None,
+        distance_km: Optional[float] = None,
+        merchant: Optional[str] = None,
+        category: Optional[str] = None,
+        age: Optional[int] = None
+    ) -> str:
+        """
+        Dự đoán giao dịch có gian lận không
+        
+        Args:
+            amt: Số tiền giao dịch (bắt buộc)
+            hour: Giờ giao dịch (0-23)
+            distance_km: Khoảng cách từ nhà (km)
+            merchant: Tên merchant
+            category: Loại giao dịch
+            age: Tuổi khách hàng
+        """
+        
+        # WORKAROUND: LangChain đôi khi truyền toàn bộ JSON dict vào amt parameter
+        if isinstance(amt, str) and amt.strip().startswith('{'):
+            try:
+                input_dict = json.loads(amt)
+                amt = input_dict.get('amt')
+                hour = input_dict.get('hour', hour)
+                distance_km = input_dict.get('distance_km', distance_km)
+                merchant = input_dict.get('merchant', merchant)
+                category = input_dict.get('category', category)
+                age = input_dict.get('age', age)
+            except json.JSONDecodeError:
+                pass  # Keep original amt value
+        
+        # Parse amount
+        try:
+            if amt is None:
+                return "❌ Lỗi: Thiếu tham số 'amt' (số tiền giao dịch)"
+            amt = float(amt)
+        except (ValueError, TypeError) as e:
+            return f"❌ Lỗi parse số tiền: {str(e)}"
+        
+        # Validate amt
+        if amt <= 0:
+            return "❌ Lỗi: Số tiền giao dịch phải > 0"
         
         # Build features (simplified version)
         features = {
@@ -185,9 +224,10 @@ Giao dịch ${amt:.2f}:
         else:
             return f"❌ Lỗi prediction: {result['error']}"
     
-    return Tool(
-        name="PredictFraud",
+    # Dùng StructuredTool với infer_schema thay vì args_schema
+    return StructuredTool.from_function(
         func=predict_fraud,
+        name="PredictFraud",
         description="""
 Công cụ dự đoán giao dịch có gian lận hay không bằng ML model.
 
@@ -196,20 +236,20 @@ Sử dụng khi cần:
 - Đánh giá scenario giả định
 - So sánh các giao dịch khác nhau
 
-Input bắt buộc:
-- amt: Số tiền giao dịch (float, ví dụ: 500.0)
+Input:
+- amt: Số tiền giao dịch (BẮT BUỘC, kiểu float hoặc int)
+- hour: Giờ giao dịch 0-23 (tùy chọn, kiểu int)
+- distance_km: Khoảng cách từ nhà (tùy chọn, kiểu float)
+- merchant: Tên merchant (tùy chọn, kiểu string)
+- category: Loại giao dịch (tùy chọn, kiểu string)
+- age: Tuổi khách hàng (tùy chọn, kiểu int)
 
-Input tùy chọn (càng nhiều càng chính xác):
-- hour: Giờ giao dịch (0-23)
-- distance_km: Khoảng cách từ nhà khách hàng
-- merchant: Tên merchant
-- category: Loại giao dịch
-- age: Tuổi khách hàng
-
-Output: Kết quả dự đoán với giải thích chi tiết
+Output: Kết quả dự đoán với giải thích
 
 Ví dụ:
-- PredictFraud(amt=850.0, hour=2, distance_km=150.0)
-- PredictFraud(amt=1200.0)
-        """
+- PredictFraud(amt=850.0, hour=2)
+- PredictFraud(amt=1200.0, distance_km=150.0)
+- PredictFraud(amt=500)
+        """,
+        handle_tool_error=True
     )
