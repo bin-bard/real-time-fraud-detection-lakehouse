@@ -37,7 +37,7 @@ nano .env     # Linux/Mac
 
 ```bash
 # File: .env
-GOOGLE_API_KEY=AIzaSyBzxrEjLhrmXPRwy3F63cwRiYBpIyHWrdY
+GOOGLE_API_KEY=AIz
 
 # Optional
 MODEL_STAGE=Production
@@ -315,5 +315,5 @@ docker-compose up -d
 
 ---
 
-**Setup time:** ~10-15 minutes  
+**Setup time:** ~10-15 minutes
 **Status check:** http://localhost:8501 → Sidebar → System Status
