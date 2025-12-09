@@ -31,6 +31,7 @@ def render_prediction_details(data: Dict):
     
     risk_level = data.get("risk_level", "UNKNOWN")
     probability = data.get("fraud_probability", 0)
+    is_fallback = data.get("model_version") == "rule_based_fallback"
     
     # Risk emoji
     risk_emoji = {
@@ -39,8 +40,12 @@ def render_prediction_details(data: Dict):
         "HIGH": "🔴"
     }.get(risk_level, "⚪")
     
-    # Display metrics (NO nested expander)
+    # Display metrics
     st.markdown(f"### {risk_emoji} Chi tiết dự đoán")
+    
+    # Fallback warning
+    if is_fallback:
+        st.warning("⚠️ ML Model không khả dụng. Sử dụng rule-based fallback (dựa trên amt + time).")
     
     col1, col2, col3 = st.columns(3)
     
@@ -49,17 +54,18 @@ def render_prediction_details(data: Dict):
     with col2:
         st.metric("Probability", f"{probability:.1%}")
     with col3:
-        st.metric("Model", data.get("model_version", "N/A"))
+        model_label = "Rule-based" if is_fallback else data.get("model_version", "N/A")
+        st.metric("Model", model_label)
     
     # Explanation
     if "explanation" in data:
         st.markdown("**💬 Giải thích:**")
         st.info(data["explanation"])
     
-    # Model info (as JSON, not expander)
-    if "model_info" in data:
-        st.markdown("**⚙️ Model Details:**")
-        st.json(data["model_info"])
+    # Model info - COLLAPSED by default
+    if "model_info" in data and not is_fallback:
+        with st.expander("⚙️ Model Details", expanded=False):
+            st.json(data["model_info"])
 
 def render_thinking_process(steps):
     """Hiển thị quá trình suy nghĩ của Agent"""

@@ -12,6 +12,15 @@ Dự án xây dựng pipeline xử lý dữ liệu end-to-end từ CDC (Change D
 - **ETL Batch**: Bronze → Silver → Gold (Airflow mỗi 5 phút)
 - **Huấn luyện ML**: RandomForest + LogisticRegression (Airflow hàng ngày 2 giờ sáng)
 - **Phân tích**: Trino + Metabase Dashboard
+- **Chatbot AI**: Streamlit + LangChain + Gemini (tiếng Việt)
+
+## 📚 Tài liệu
+
+- **[Setup Guide](docs/SETUP_GUIDE.md)** - Hướng dẫn cài đặt chi tiết cho người mới
+- **[Chatbot Guide](docs/CHATBOT_GUIDE.md)** - Hướng dẫn sử dụng Fraud Chatbot
+- **[Chatbot Architecture](docs/CHATBOT_ARCHITECTURE.md)** - Kiến trúc modular của chatbot
+- **[Implementation Summary](docs/IMPLEMENTATION_SUMMARY.md)** - Tổng hợp các thay đổi
+- **[Changelog](docs/CHANGELOG.md)** - Lịch sử thay đổi dự án
 
 ## 🛠️ Công nghệ sử dụng
 
