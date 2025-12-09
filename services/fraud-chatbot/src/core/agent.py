@@ -113,13 +113,29 @@ def run_agent(question: str) -> Dict:
     agent = get_fraud_detection_agent()
     
     try:
+        # Run với timeout để tránh retry vô hạn
+        import signal
+        
+        def timeout_handler(signum, frame):
+            raise TimeoutError("Agent execution timeout")
+        
+        # Set timeout 90s (cho phép max 2 retries của Gemini)
+        # signal.alarm(90)  # Chỉ work trên Unix
+        
         result = agent.invoke({"input": question})
+        
+        # signal.alarm(0)  # Cancel timeout
         
         return {
             "success": True,
             "answer": result.get("output", ""),
             "intermediate_steps": result.get("intermediate_steps", []),
             "sql_queries": extract_sql_queries(result.get("intermediate_steps", []))
+        }
+    except TimeoutError:
+        return {
+            "success": False,
+            "error": "⏱️ Request timeout sau 90s. Có thể Gemini API đang quá tải."
         }
     except Exception as e:
         error_msg = str(e)
@@ -128,7 +144,7 @@ def run_agent(question: str) -> Dict:
         if "429" in error_msg or "quota" in error_msg.lower() or "ResourceExhausted" in error_msg:
             return {
                 "success": False,
-                "error": "⚠️ Gemini API quota exceeded. Vui lòng thử lại sau vài phút hoặc upgrade plan tại https://ai.google.dev/pricing"
+                "error": "⚠️ Gemini API quota exceeded (20 requests/day limit). Vui lòng thử lại sau vài phút hoặc upgrade plan tại https://ai.google.dev/pricing"
             }
         
         return {

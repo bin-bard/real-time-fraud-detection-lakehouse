@@ -163,9 +163,9 @@ class CSVBatchUploader:
                 df = pd.read_csv(uploaded_file)
                 st.write(f"✅ Đọc được {len(df)} giao dịch")
                 
-                # Preview
-                with st.expander("👀 Preview"):
-                    st.dataframe(df.head())
+                # Preview - NO expander (already in Batch Upload expander)
+                st.caption("👀 Preview:")
+                st.dataframe(df.head(), use_container_width=True)
                 
                 # Predict button
                 if st.button("🔮 Batch Predict", use_container_width=True):

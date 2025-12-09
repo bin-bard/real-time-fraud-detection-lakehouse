@@ -415,37 +415,46 @@ async def predict_with_explanation(features: TransactionFeatures):
             is_fraud, fraud_probability = rule_based_prediction(features)
             model_ver = "rule_based_v1.0"
         else:
-            # Use MLflow model
-            feature_array = np.array([[
-                features.amt,
-                features.log_amount,
-                features.is_zero_amount,
-                features.is_high_amount,
-                features.amount_bin,
-                features.distance_km,
-                features.is_distant_transaction,
-                features.age,
-                features.gender_encoded,
-                features.hour,
-                features.day_of_week,
-                features.is_weekend,
-                features.is_late_night,
-                features.hour_sin,
-                features.hour_cos,
-                0.0, 0.0, 0.0, 0.0, 0.0  # Placeholders
-            ]])
-            
+            # Use MLflow model - SAME as /predict endpoint
             try:
-                prediction = loaded_model.predict(feature_array)
-                is_fraud = int(prediction[0])
+                # IMPORTANT: Order MUST match training features in ml_training_sklearn.py
+                feature_values = [
+                    features.amt,
+                    features.log_amount,
+                    features.is_zero_amount,
+                    features.is_high_amount,
+                    features.amount_bin,
+                    features.distance_km,
+                    features.is_distant_transaction,
+                    features.age,
+                    features.gender_encoded,
+                    features.hour,
+                    features.day_of_week,
+                    features.is_weekend,
+                    features.is_late_night,
+                    features.hour_sin,
+                    features.hour_cos,
+                ]
                 
+                # Reshape for sklearn (expects 2D array)
+                X = np.array(feature_values).reshape(1, -1)
+                
+                # Debug logging
+                logger.info(f"🔍 Prediction input: shape={X.shape}, features={len(feature_values)}")
+                
+                # Predict
+                is_fraud = int(loaded_model.predict(X)[0])
+                
+                # Get probability if available
                 try:
-                    proba = loaded_model.predict_proba(feature_array)
-                    fraud_probability = float(proba[0][1]) if len(proba[0]) > 1 else float(is_fraud)
+                    proba = loaded_model.predict_proba(X)[0]
+                    fraud_probability = float(proba[1])  # Probability of fraud (class 1)
                 except:
-                    fraud_probability = float(is_fraud)
+                    fraud_probability = float(is_fraud)  # Fallback to binary prediction
                 
                 model_ver = f"mlflow_{model_version}"
+                logger.info(f"✅ MLflow prediction successful: fraud={is_fraud}, prob={fraud_probability:.3f}")
+                
             except Exception as e:
                 logger.error(f"MLflow prediction failed: {e}, using rule-based fallback")
                 is_fraud, fraud_probability = rule_based_prediction(features)
@@ -473,7 +482,7 @@ async def predict_with_explanation(features: TransactionFeatures):
                 "model_type": "mlflow_model",
                 "model_version": model_version,
                 "framework": "sklearn_RandomForest",
-                "features_used": 20,
+                "features_used": 15,  # FIX: 15 features, not 20
                 "training_metrics": {
                     "accuracy": round(model_info.get("accuracy", 0), 4),
                     "precision": round(model_info.get("precision", 0), 4),
