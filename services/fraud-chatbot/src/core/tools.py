@@ -17,7 +17,7 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from database.trino import execute_sql_query
-from utils.api_client import predict_fraud_api
+from utils.api_client import predict_fraud_api, get_model_info
 
 class QueryDatabaseInput(BaseModel):
     """Input cho QueryDatabaseTool"""
@@ -252,4 +252,69 @@ Ví dụ:
 - PredictFraud(amt=500)
         """,
         handle_tool_error=True
+    )
+
+def create_model_info_tool():
+    """Công cụ lấy thông tin model từ API"""
+    
+    def get_model_information(query: str = "") -> str:
+        """Lấy thông tin chi tiết về ML model đang sử dụng"""
+        result = get_model_info()
+        
+        if result["success"]:
+            data = result["data"]
+            model_type = data.get("model_type", "unknown")
+            
+            if model_type == "mlflow_model":
+                perf = data.get("performance", {})
+                return f"""
+📊 **Thông tin ML Model**
+
+**Model:** {data.get('model_name', 'N/A')} v{data.get('model_version', 'N/A')}
+**Framework:** {data.get('framework', 'N/A')}
+**Features:** {data.get('features_count', 'N/A')} features
+**Dataset:** {data.get('trained_on', 'N/A')}
+**Status:** {data.get('status', 'N/A')}
+
+**Performance Metrics:**
+- **Accuracy:** {perf.get('accuracy', 0):.1%}
+- **Precision:** {perf.get('precision', 0):.1%}
+- **Recall:** {perf.get('recall', 0):.1%}
+- **F1-Score:** {perf.get('f1_score', 0):.1%}
+- **AUC:** {perf.get('auc', 0):.1%}
+
+**MLflow URI:** {data.get('mlflow_tracking_uri', 'N/A')}
+"""
+            else:
+                return f"""
+⚠️ **Model Fallback Mode**
+
+**Model:** Rule-based v{data.get('model_version', '1.0')}
+**Framework:** {data.get('framework', 'custom')}
+**Status:** {data.get('status', 'fallback')}
+**Note:** {data.get('note', 'MLflow model chưa load')}
+"""
+        else:
+            return f"❌ Lỗi lấy thông tin model: {result['error']}"
+    
+    return Tool(
+        name="GetModelInfo",
+        func=get_model_information,
+        description="""
+Công cụ lấy thông tin chi tiết về ML model đang được sử dụng.
+
+Sử dụng khi cần:
+- Câu hỏi về "thông tin model", "model hiện tại", "model nào"
+- Kiểm tra performance metrics (accuracy, F1, AUC...)
+- Xem version model đang dùng
+- Kiểm tra trạng thái model (production/fallback)
+
+Input: Không cần tham số
+Output: Thông tin chi tiết về model với metrics
+
+Ví dụ câu hỏi:
+- "Thông tin model"
+- "Model hiện tại là gì?"
+- "Accuracy của model bao nhiêu?"
+        """
     )

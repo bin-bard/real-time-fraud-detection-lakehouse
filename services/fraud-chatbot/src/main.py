@@ -70,7 +70,7 @@ def main():
     
     # Main chat area
     st.title("💬 Fraud Detection Chatbot")
-    st.caption(f"Session: `{st.session_state.session_id[:8]}...` | Powered by Gemini 2.0 Flash & LangChain")
+    st.caption(f"Session: `{st.session_state.session_id[:8]}...`")
     
     # Display messages
     for msg in st.session_state.messages:

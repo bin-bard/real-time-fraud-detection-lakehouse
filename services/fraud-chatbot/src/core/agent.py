@@ -14,7 +14,7 @@ import os
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
-from core.tools import create_database_tool, create_prediction_tool
+from core.tools import create_database_tool, create_prediction_tool, create_model_info_tool
 from core.config import GEMINI_MODEL_NAME, GEMINI_MAX_RETRIES, GEMINI_REQUEST_TIMEOUT
 
 @st.cache_resource
@@ -33,15 +33,17 @@ def get_fraud_detection_agent() -> AgentExecutor:
     # Tools (pass LLM to prediction tool for AI insights)
     tools = [
         create_database_tool(),
-        create_prediction_tool(llm)
+        create_prediction_tool(llm),
+        create_model_info_tool()
     ]
     
     # Prompt template (ReAct format) - TIẾNG VIỆT
     prompt = PromptTemplate.from_template("""
-Bạn là chuyên gia phân tích gian lận tài chính với 2 công cụ mạnh mẽ:
+Bạn là chuyên gia phân tích gian lận tài chính với 3 công cụ mạnh mẽ:
 
 1. **QueryDatabase**: Truy vấn Delta Lake để phân tích dữ liệu lịch sử
 2. **PredictFraud**: Dự đoán giao dịch mới có gian lận không
+3. **GetModelInfo**: Lấy thông tin về ML model đang sử dụng
 
 TOOLS:
 {tools}
@@ -52,9 +54,10 @@ TOOL NAMES: {tool_names}
 
 **Hướng dẫn sử dụng:**
 
-- Nếu câu hỏi về **dữ liệu lịch sử** (top X, fraud rate, trends, thông tin model...) → Dùng QueryDatabase
+- Nếu câu hỏi về **dữ liệu lịch sử** (top X, fraud rate, trends...) → Dùng QueryDatabase
 - Nếu câu hỏi về **giao dịch cụ thể** (dự đoán, kiểm tra...) → Dùng PredictFraud
-- Câu hỏi **phức hợp** → Dùng cả 2 tools theo thứ tự logic
+- Nếu câu hỏi về **thông tin model** (accuracy, version, metrics...) → Dùng GetModelInfo
+- Câu hỏi **phức hợp** → Dùng nhiều tools theo thứ tự logic
 - Câu hỏi **tổng quát** về fraud (định nghĩa, pattern...) → Trả lời trực tiếp không cần tool
 
 **Ví dụ câu phức hợp:**
@@ -70,12 +73,14 @@ TOOL NAMES: {tool_names}
 - Ví dụ SAI: PredictFraud(amt="$850", hour="2h")
 
 **Lưu ý quan trọng:**
-- SQL queries phải hợp lệ Trino syntax
+- SQL queries phải hợp lệ Trino syntax trên catalog **delta.gold**
 - Ưu tiên dùng bảng pre-aggregated (state_summary, merchant_analysis) để nhanh
-- **Schema thường dùng:**
+- **Bảng có sẵn trong delta.gold:**
   * merchant_analysis: merchant, merchant_category, total_transactions, fraud_transactions, avg_amount, fraud_rate
   * state_summary: state, total_transactions, fraud_transactions, fraud_rate
-  * fraud_predictions: trans_num, is_fraud_predicted, fraud_probability, model_version (thông tin model)
+  * hourly_summary, daily_summary: fraud_rate, avg_amount theo thời gian
+  * fact_transactions: Bảng giao dịch chi tiết (chậm, ít dùng)
+- **LƯU Ý:** Bảng fraud_predictions KHÔNG có trong Trino (chỉ có trong PostgreSQL), không thể query được
 - Nếu query lỗi COLUMN_NOT_FOUND → Dùng DESCRIBE <table> để xem schema chính xác
 - **FINAL ANSWER:**
   * Với PredictFraud: TRẢ NGUYÊN VĂN output từ tool (giữ nguyên format markdown với emoji, tables)
