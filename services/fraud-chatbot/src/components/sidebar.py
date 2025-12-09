@@ -81,8 +81,7 @@ def test_gemini_connection(api_key: str):
             )
             response = llm.invoke("Hello")
             st.success("✅ Gemini hoạt động tốt!")
-            with st.expander("Response"):
-                st.info(response.content[:200])
+            st.caption(f"Response: {response.content[:100]}...")
         except Exception as e:
             st.error(f"❌ Lỗi: {str(e)[:100]}")
 
@@ -92,8 +91,8 @@ def show_model_info():
     with st.spinner("Loading..."):
         info_result = get_model_info()
         if info_result["success"]:
-            with st.expander("⚙️ Model Details", expanded=True):
-                st.json(info_result["data"])
+            st.success("⚙️ Model Details")
+            st.json(info_result["data"])
         else:
             st.error(f"❌ {info_result['error']}")
 

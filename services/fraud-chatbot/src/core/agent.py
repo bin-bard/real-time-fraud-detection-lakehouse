@@ -20,12 +20,14 @@ from core.tools import create_database_tool, create_prediction_tool
 def get_fraud_detection_agent() -> AgentExecutor:
     """Tạo ReAct Agent với 2 tools: QueryDatabase và PredictFraud"""
     
-    # LLM - Gemini
+    # LLM - Gemini với retry limit
     llm = ChatGoogleGenerativeAI(
         model="gemini-2.5-flash-lite",
         temperature=0,
         google_api_key=os.getenv("GOOGLE_API_KEY", ""),
-        convert_system_message_to_human=True
+        convert_system_message_to_human=True,
+        max_retries=2,  # Giới hạn retry để không bị vòng lặp vô hạn
+        request_timeout=30  # Timeout sau 30s
     )
     
     # Tools
@@ -120,9 +122,18 @@ def run_agent(question: str) -> Dict:
             "sql_queries": extract_sql_queries(result.get("intermediate_steps", []))
         }
     except Exception as e:
+        error_msg = str(e)
+        
+        # Check for quota exceeded error
+        if "429" in error_msg or "quota" in error_msg.lower() or "ResourceExhausted" in error_msg:
+            return {
+                "success": False,
+                "error": "⚠️ Gemini API quota exceeded. Vui lòng thử lại sau vài phút hoặc upgrade plan tại https://ai.google.dev/pricing"
+            }
+        
         return {
             "success": False,
-            "error": str(e)
+            "error": error_msg
         }
 
 def extract_sql_queries(steps) -> list:

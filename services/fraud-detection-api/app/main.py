@@ -84,8 +84,15 @@ def get_postgres_conn():
 def save_prediction_to_db(trans_num: str, prediction: int, probability: float, model_ver: str):
     """
     Save prediction to fraud_predictions table
-    FIX: Đảm bảo LUÔN lưu vào fraud_predictions với ON CONFLICT
+    NOTE: Chỉ lưu khi có ML model prediction. Rule-based fallback không lưu vì:
+    - Manual predictions không có transaction record trong DB
+    - Foreign key constraint: fraud_predictions.trans_num -> transactions.trans_num
     """
+    # Skip saving if using rule-based fallback
+    if "rule_based" in model_ver.lower() or "fallback" in model_ver.lower():
+        logger.info(f"⏭️ Skipping DB save for rule-based prediction: {trans_num}")
+        return True
+    
     try:
         conn = get_postgres_conn()
         if not conn:
@@ -94,7 +101,7 @@ def save_prediction_to_db(trans_num: str, prediction: int, probability: float, m
             
         cur = conn.cursor()
         
-        # FIX: Sử dụng INSERT ... ON CONFLICT DO UPDATE để tránh duplicate
+        # INSERT with ON CONFLICT to handle duplicates
         insert_sql = """
             INSERT INTO fraud_predictions (trans_num, prediction_score, is_fraud_predicted, model_version, prediction_time)
             VALUES (%s, %s, %s, %s, NOW())
@@ -115,9 +122,6 @@ def save_prediction_to_db(trans_num: str, prediction: int, probability: float, m
     except Exception as e:
         logger.error(f"❌ Failed to save prediction: {str(e)}")
         return False
-        return True
-    except Exception as e:
-        logger.error(f"Failed to save prediction: {e}")
         return False
 
 def explain_prediction(features: TransactionFeatures, prediction: int, probability: float) -> str:
@@ -323,6 +327,7 @@ async def predict_fraud(features: TransactionFeatures):
             # Use MLflow model
             try:
                 # Prepare input data - sklearn expects numpy array
+                # IMPORTANT: Order MUST match training features in ml_training_sklearn.py
                 feature_values = [
                     features.amt,
                     features.log_amount,
@@ -343,6 +348,10 @@ async def predict_fraud(features: TransactionFeatures):
                 
                 # Reshape for sklearn (expects 2D array)
                 X = np.array(feature_values).reshape(1, -1)
+                
+                # Debug logging
+                logger.info(f"🔍 Prediction input: shape={X.shape}, features={len(feature_values)}")
+                logger.debug(f"Feature values: amt={features.amt}, hour={features.hour}, distance={features.distance_km}")
                 
                 # Predict
                 is_fraud = int(loaded_model.predict(X)[0])
@@ -579,7 +588,7 @@ def model_info_endpoint():
             "model_version": model_version,
             "framework": "sklearn",
             "mlflow_tracking_uri": MLFLOW_TRACKING_URI,
-            "features_count": 20,
+            "features_count": 15,  # FIX: 15 features, not 20
             "trained_on": "sparkov_dataset",
             "performance": {
                 "accuracy": model_info.get("accuracy", "N/A"),

@@ -36,6 +36,15 @@ def create_database_tool():
     
     def query_database(sql_query: str) -> str:
         """Thực thi SQL query và trả về kết quả"""
+        # Parse JSON nếu agent truyền vào dạng {"query": "..."}
+        import json
+        if sql_query.strip().startswith('{'):
+            try:
+                parsed = json.loads(sql_query)
+                sql_query = parsed.get('query', sql_query)
+            except:
+                pass  # Nếu không parse được thì giữ nguyên
+        
         result = execute_sql_query(sql_query)
         
         if result["success"]:
