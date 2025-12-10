@@ -461,6 +461,46 @@ services:
     restart: unless-stopped
     user: "0:0"
 
+  # Real-Time Fraud Prediction Streaming (Kafka CDC → API → Slack)
+  spark-realtime-prediction:
+    build: ./spark
+    container_name: spark-realtime-prediction
+    depends_on:
+      - kafka
+      - postgres
+      - fraud-detection-api
+    volumes:
+      - ./spark/app:/app
+      - realtime_ivy_cache:/root/.ivy2
+    environment:
+      - KAFKA_BROKER=kafka:9092
+      - KAFKA_TOPIC=postgres.public.transactions
+      - FRAUD_API_URL=http://fraud-detection-api:8000
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=frauddb
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - AWS_ACCESS_KEY_ID=minio
+      - AWS_SECRET_ACCESS_KEY=minio123
+      - MLFLOW_S3_ENDPOINT_URL=http://minio:9000
+    command: >
+      /opt/spark/bin/spark-submit
+        --master local[2]
+        --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,org.postgresql:postgresql:42.7.1,io.delta:delta-core_2.12:2.4.0,org.apache.hadoop:hadoop-aws:3.3.4
+        --conf spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension
+        --conf spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog
+        --conf spark.hadoop.fs.s3a.endpoint=http://minio:9000
+        --conf spark.hadoop.fs.s3a.access.key=minio
+        --conf spark.hadoop.fs.s3a.secret.key=minio123
+        --conf spark.hadoop.fs.s3a.path.style.access=true
+        --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem
+        /app/realtime_prediction_job.py
+    networks:
+      - data_network
+    restart: unless-stopped
+
   # FastAPI - Fraud Detection API
   fraud-detection-api:
     build:
@@ -545,6 +585,7 @@ volumes:
   metabase_db:
   airflow_db:
   bronze_ivy_cache:
+  realtime_ivy_cache:
 
 networks:
   data_network:

@@ -16,7 +16,9 @@ Dự án xây dựng pipeline xử lý dữ liệu end-to-end từ CDC (Change D
 
 ## 📚 Tài liệu
 
+- **[Setup From Scratch](docs/SETUP_FROM_SCRATCH.md)** - Complete setup guide: clone → up -d --build → test
 - **[Setup Guide](docs/SETUP_GUIDE.md)** - Hướng dẫn cài đặt chi tiết cho người mới
+- **[Streaming Services Guide](docs/STREAMING_SERVICES_GUIDE.md)** - Real-time alert service operations
 - **[Chatbot Guide](docs/CHATBOT_GUIDE.md)** - Hướng dẫn sử dụng Fraud Chatbot
 - **[Chatbot Architecture](docs/CHATBOT_ARCHITECTURE.md)** - Kiến trúc modular của chatbot
 - **[Implementation Summary](docs/IMPLEMENTATION_SUMMARY.md)** - Tổng hợp các thay đổi

@@ -1,89 +1,110 @@
+
 # Feature Engineering - Fraud Detection
 
-## 📊 Tổng quan
+## 📊 Raw Dataset (Sparkov)
 
-Model ML sử dụng **15 features** để dự đoán gian lận, nhưng user chỉ cần nhập **7 thông tin cơ bản**. Hệ thống tự động tính toán 8 features còn lại.
+**20 raw fields:**
 
----
-
-## ✍️ User Input (7 fields)
-
-Những gì user cần nhập trong Manual Prediction hoặc CSV:
-
-| Field         | Type   | Mô tả                          | Ví dụ          |
-| ------------- | ------ | ------------------------------ | -------------- |
-| `amt`         | float  | Số tiền giao dịch              | 100.0          |
-| `hour`        | int    | Giờ giao dịch (0-23)           | 14             |
-| `distance_km` | float  | Khoảng cách từ nhà             | 10.0           |
-| `age`         | int    | Tuổi khách hàng                | 35             |
-| `day_of_week` | int    | Ngày trong tuần (0=Mon, 6=Sun) | 0              |
-| `merchant`    | string | Tên merchant (optional)        | "Shop A"       |
-| `category`    | string | Loại giao dịch (optional)      | "shopping_net" |
+| Category    | Fields                                                                     | Count |
+| ----------- | -------------------------------------------------------------------------- | ----- |
+| Transaction | `amt`, `merchant`, `category`, `trans_date_trans_time`, `cc_num` | 5     |
+| Customer    | `first`, `last`, `gender`, `street`, `city`, `state`, `zip`  | 7     |
+| Location    | `lat`, `long`, `city_pop`, `merch_lat`, `merch_long`             | 5     |
+| Metadata    | `job`, `dob`, `trans_num`, `unix_time`                             | 4     |
+| Label       | `is_fraud`                                                               | 1     |
 
 ---
 
-## 🤖 Auto-Generated Features (8 fields)
+## 🛠️ Feature Engineering (Silver Layer)
 
-Hệ thống tự động tính toán từ 7 input trên:
-
-### 1. Amount Features (4)
+### **15 Numerical Features (Used by Model)**
 
 ```python
-log_amount = math.log1p(amt)  # Log transformation
-is_high_amount = 1 if amt > 500 else 0
-is_zero_amount = 1 if amt == 0 else 0
+# 1. Amount Features (5)
+amt                    # Raw transaction amount
+log_amount            # log(1 + amt) - handles skewness
+is_zero_amount        # Binary: amt == 0
+is_high_amount        # Binary: amt > $500
+amount_bin            # Categorical: 0-50, 50-150, 150-300, 300-500, >500
 
-# Amount bin (0-5)
-if amt == 0: amount_bin = 0
-elif amt <= 50: amount_bin = 1
-elif amt <= 150: amount_bin = 2
-elif amt <= 300: amount_bin = 3
-elif amt <= 500: amount_bin = 4
-else: amount_bin = 5
+# 2. Distance Features (2)
+distance_km           # Haversine(customer_location, merchant_location)
+is_distant_transaction # Binary: distance > 50km
+
+# 3. Demographics (2)
+age                   # Current_year - birth_year
+gender_encoded        # M=1, F=0
+
+# 4. Time Features (6)
+hour                  # 0-23
+day_of_week          # 0=Mon, 6=Sun
+is_weekend           # Binary: Sat/Sun
+is_late_night        # Binary: 0-6AM or 11PM-12AM
+hour_sin             # Cyclical encoding
+hour_cos             # Cyclical encoding
 ```
 
-### 2. Distance Feature (1)
+### **2 Categorical Features (Not Used Yet)**
 
 ```python
-is_distant_transaction = 1 if distance_km > 50 else 0
+merchant             # String (needs encoding)
+category             # String (e.g., grocery_pos, gas_transport)
 ```
 
-### 3. Time Features (3)
-
-```python
-is_weekend = 1 if day_of_week in [5, 6] else 0
-is_late_night = 1 if hour < 6 or hour >= 23 else 0
-hour_sin = math.sin(2 * math.pi * hour / 24)  # Cyclic encoding
-hour_cos = math.cos(2 * math.pi * hour / 24)
-```
+**Note:** Model hiện tại chưa dùng merchant/category vì chưa implement encoding (One-Hot hoặc Target Encoding).
 
 ---
 
-## 🎯 Final 15 Features for Model
+## 🤖 Chatbot Input Mapping
 
-Thứ tự features **PHẢI ĐÚNG** với training model:
+### **User nhập (6-7 fields):**
 
-```python
-[
-    amt,                      # 1. Original amount
-    log_amount,              # 2. Log transformed
-    is_zero_amount,          # 3. Zero amount flag
-    is_high_amount,          # 4. High amount flag (>500)
-    amount_bin,              # 5. Amount category (0-5)
-    distance_km,             # 6. Distance from home
-    is_distant_transaction,  # 7. Far transaction flag (>50km)
-    age,                     # 8. Customer age
-    gender_encoded,          # 9. Gender (0=F, 1=M) - DEFAULT 0
-    hour,                    # 10. Hour of day
-    day_of_week,             # 11. Day of week
-    is_weekend,              # 12. Weekend flag
-    is_late_night,           # 13. Late night flag
-    hour_sin,                # 14. Hour sine
-    hour_cos                 # 15. Hour cosine
-]
+```
+amt=850              # Required
+hour=2               # Optional (default=12)
+distance_km=150      # Optional (default=10)
+age=35               # Optional (default=35)
+merchant="Shop A"    # Optional (not used by model)
+category="shopping"  # Optional (not used by model)
+day_of_week=0        # Optional (default=0)
 ```
 
-**Note:** `gender_encoded` mặc định là 0 (Female) vì không có trong input form.
+### **API tự tính (8 fields):**
+
+```python
+log_amount = log(1 + 850) = 6.75
+is_high_amount = 1  # amt > 500
+is_zero_amount = 0
+amount_bin = 4      # 500-1000 range
+is_distant = 1      # distance > 50km
+gender_encoded = 0  # Default Female (not collected)
+is_weekend = 0      # day_of_week=0 (Monday)
+is_late_night = 1   # hour=2 (2AM)
+hour_sin = sin(2π*2/24) = 0.5
+hour_cos = cos(2π*2/24) = 0.866
+```
+
+### **Total features sent to model: 15**
+
+---
+
+## ✅ Validation
+
+### **Tại sao chatbot input ít?**
+
+**Lý do kỹ thuật:**
+
+1. **Separation of Concerns**: User không cần biết feature engineering
+2. **API-driven**: Logic tính toán tập trung ở API (dễ maintain)
+3. **User Experience**: Form đơn giản hơn (7 fields thay vì 15)
+
+**Trade-off:**
+
+| Aspect      | Pro                                             | Con                                          |
+| ----------- | ----------------------------------------------- | -------------------------------------------- |
+| Accuracy    | ✅ Model dùng đủ 15 features                 | ❌ Thiếu gender, exact location             |
+| UX          | ✅ Form ngắn gọn                              | ⚠️ Phải nhập distance thủ công         |
+| Flexibility | ✅ Thay đổi model không ảnh hưởng chatbot | ⚠️ Chatbot không control được defaults |
 
 ---
 
@@ -121,24 +142,31 @@ features = {
     "is_weekend": 0,
     "is_late_night": 0,
     "hour_sin": -0.5,
-    "hour_cos": -0.866,
+    "hour_cos": 0.866,
 
-    # Defaults
+    # Defaults 5
     "gender_encoded": 0,
-    "trans_num": "MANUAL_20251209..."
+    "trans_num": "MANUAL_20250110120000"
 }
 
-# 3. API extracts 15 features in correct order
-feature_values = [
-    features.amt,
-    features.log_amount,
-    features.is_zero_amount,
-    # ... (15 features total)
-]
+# 3. Send to API
+POST /predict/raw
+{
+    "amt": 100.0,
+    "hour": 14,
+    "distance_km": 10.0,
+    "age": 35,
+    "merchant": "Shop A",
+    "category": "shopping_net"
+}
 
-# 4. Model predicts
-X = np.array(feature_values).reshape(1, -1)  # Shape: (1, 15)
-prediction = model.predict(X)
+# 4. API responds
+{
+    "is_fraud_predicted": 0,
+    "fraud_probability": 0.15,
+    "risk_level": "LOW",
+    ...
+}
 ```
 
 ### Batch CSV Upload
@@ -164,49 +192,21 @@ result = predict_batch_api(transactions)
 
 ---
 
-## ❓ FAQs
-
-### Q: Tại sao model cần 15 features nhưng user chỉ nhập 7?
-
-**A:** Để đơn giản hóa UX. User không cần biết về feature engineering (log transformation, cyclic encoding...). Hệ thống tự động tính toán.
-
-### Q: Điền giá trị mặc định như thế nào?
-
-**A:**
-
-- `gender_encoded = 0` (Female)
-- Các features khác được tính từ user input
-- Không có giá trị "random" - tất cả deterministic
-
-### Q: Batch CSV có thể thiếu columns không?
-
-**A:** Có, optional columns (merchant, category) có thể bỏ trống. Code sẽ dùng `row.get('merchant')` → None.
-
-### Q: `/predict/explained` endpoint khác gì `/predict`?
-
-**A:**
-
-- `/predict`: Trả kết quả ngắn gọn
-- `/predict/explained`: Trả kết quả + explanation text (Vietnamese) + model_info
-- Chatbot dùng `/predict/explained` để có thêm context cho user
-
----
-
 ## 🔧 Troubleshooting
 
 ### Error: "X has 20 features, but model expects 15"
 
-**Nguyên nhân:** Code cũ truyền 20 features (15 + 5 placeholders)  
+**Nguyên nhân:** Code cũ truyền 20 features (15 + 5 placeholders)
 **Fix:** Đã fix - chỉ truyền 15 features đúng thứ tự
 
 ### Error: "422 Unprocessable Entity" ở batch predict
 
-**Nguyên nhân:** API expect `list[TransactionFeatures]` với đầy đủ 20 fields  
+**Nguyên nhân:** API expect `list[TransactionFeatures]` với đầy đủ 20 fields
 **Fix:** `_build_features()` đã generate đủ 20 fields
 
 ### Manual prediction bị duplicate info
 
-**Nguyên nhân:** Hiển thị explanation 2 lần (summary + expander)  
+**Nguyên nhân:** Hiển thị explanation 2 lần (summary + expander)
 **Fix:** Đã fix - summary ngắn gọn, details trong expander
 
 ---
@@ -220,5 +220,5 @@ result = predict_batch_api(transactions)
 
 ---
 
-**Last Updated:** 2025-12-10  
+**Last Updated:** 2025-12-10
 **Author:** GitHub Copilot (Claude Sonnet 4.5)

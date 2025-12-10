@@ -60,6 +60,8 @@ schema = StructType([
 ])
 
 # Đọc dữ liệu từ Kafka (Debezium CDC format)
+# Bronze layer: use "earliest" to capture ALL historical data on first run
+# Checkpoint ensures no reprocessing on restart
 kafka_stream_df = spark \
     .readStream \
     .format("kafka") \
