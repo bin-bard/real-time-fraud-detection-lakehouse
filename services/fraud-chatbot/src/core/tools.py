@@ -223,7 +223,7 @@ def create_model_info_tool():
             if model_type == "mlflow_model":
                 perf = data.get("performance", {})
                 return f"""
-📊 **Thông tin ML Model**
+ℹ️ **Thông tin ML Model**
 
 **Model:** {data.get('model_name', 'N/A')} v{data.get('model_version', 'N/A')}
 **Framework:** {data.get('framework', 'N/A')}

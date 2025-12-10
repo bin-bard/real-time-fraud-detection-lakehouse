@@ -163,7 +163,7 @@ def display_prediction_result(result: Dict, source: str = "Manual"):
         source: "Manual", "Chatbot", hoặc "Batch"
     """
     
-    with st.spinner("🤖 Đang phân tích kết quả..."):
+    with st.spinner("🔎 Đang phân tích kết quả..."):
         ai_insight = get_ai_insight(result)
     
     formatted_msg = format_prediction_message(result, ai_insight)
@@ -173,5 +173,5 @@ def display_prediction_result(result: Dict, source: str = "Manual"):
     
     # Additional details if needed
     if "feature_explanation" in result and result["feature_explanation"]:
-        with st.expander("📊 Chi tiết features"):
+        with st.expander("⚡ Chi tiết features"):
             st.text(result["feature_explanation"])

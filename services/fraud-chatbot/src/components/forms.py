@@ -147,7 +147,7 @@ class CSVBatchUploader:
             summary = data.get("summary", {})
             
             # Generate AI insight using shared component
-            with st.spinner("🤖 Đang phân tích kết quả batch..."):
+            with st.spinner("🔎 Đang phân tích kết quả batch..."):
                 batch_insight = get_batch_ai_insight(summary)
             
             # Display AI insight first
@@ -155,7 +155,7 @@ class CSVBatchUploader:
             
             # Display summary
             st.success(f"""
-### 📊 Kết quả Batch Prediction
+### Kết quả Batch Prediction
 
 - **Tổng giao dịch:** {summary.get('total_transactions', 0)}
 - **Phát hiện gian lận:** {summary.get('fraud_detected', 0)} ({summary.get('fraud_rate', 0):.1f}%)

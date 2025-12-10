@@ -227,7 +227,7 @@ def process_bronze_to_silver_batch():
             .save(silver_path)
             
         logger.info(f"✅ Successfully processed {count} records to Silver layer!")
-        logger.info(f"📊 Output: {silver_path}")
+        logger.info(f"ℹ✨ Output: {silver_path}")
         
     except Exception as e:
         logger.error(f"❌ Error processing Bronze to Silver: {e}", exc_info=True)

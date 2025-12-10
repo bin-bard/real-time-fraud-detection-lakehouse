@@ -111,7 +111,7 @@ def simulate_real_time_stream():
                     if i % 100 == 0:
                         conn.commit()
                         save_checkpoint(i, row.get('trans_num'))
-                        print(f"📊 Processed {i} transactions...")
+                        print(f"⚡ Processed {i} transactions...")
                         
                 except Exception as e:
                     print(f"⚠️ Error processing row {i}: {e}")
@@ -282,7 +282,7 @@ def bulk_load_transactions(num_records=50000):
             print(f"\n{'='*60}")
             print(f"🎉 BULK LOAD COMPLETE!")
             print(f"{'='*60}")
-            print(f"📊 Total records loaded: {records_loaded}")
+            print(f"✨ Total records loaded: {records_loaded}")
             print(f"📍 Final checkpoint: Line {i}")
             print(f"✅ Ready for streaming mode")
             print(f"{'='*60}\n")

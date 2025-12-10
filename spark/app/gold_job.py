@@ -227,8 +227,8 @@ def process_silver_to_gold_batch():
         # ============================================
         logger.info("=" * 60)
         logger.info("✅ Gold layer batch processing completed!")
-        logger.info(f"📊 Processed {count} records from Silver layer")
-        logger.info("📊 Updated tables:")
+        logger.info(f"⚡ Processed {count} records from Silver layer")
+        logger.info("⚡ Updated tables:")
         logger.info(f"   - dim_customer -> {dim_customer_path}")
         logger.info(f"   - dim_merchant -> {dim_merchant_path}")
         logger.info(f"   - dim_time -> {dim_time_path}")

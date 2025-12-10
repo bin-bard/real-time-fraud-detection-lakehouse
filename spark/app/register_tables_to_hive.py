@@ -152,7 +152,7 @@ def main():
     fail_count = 0
     
     for config in tables_config:
-        logger.info(f"\n📊 Processing {config['database']}.{config['table_name']}...")
+        logger.info(f"\n⚡ Processing {config['database']}.{config['table_name']}...")
         
         # Kiểm tra Delta table tồn tại
         try:
@@ -180,7 +180,7 @@ def main():
     
     # Summary
     logger.info("\n" + "="*60)
-    logger.info("📊 Registration Summary:")
+    logger.info("⚡ Registration Summary:")
     logger.info(f"   ✅ Success: {success_count} tables")
     logger.info(f"   ⚠️  Skipped: {fail_count} tables (chưa có data)")
     logger.info("="*60)

@@ -171,7 +171,7 @@ def render_examples():
     """Câu hỏi mẫu"""
     with st.expander("💡 Examples", expanded=False):
         st.markdown("""
-**📊 Analytics:**
+**⚡ Analytics:**
 - Top 5 bang có fraud rate cao nhất
 - Merchant nguy hiểm nhất  
 - Fraud rate theo giờ trong ngày

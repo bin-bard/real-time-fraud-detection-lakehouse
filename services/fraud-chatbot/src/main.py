@@ -82,7 +82,7 @@ def main():
         result = st.session_state.manual_prediction_result
         
         # Generate AI insight using component
-        with st.spinner("🤖 Đang phân tích kết quả..."):
+        with st.spinner("🔎 Đang phân tích kết quả..."):
             ai_insight = get_ai_insight(result)
         
         # Format message using shared component

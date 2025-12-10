@@ -224,7 +224,7 @@ class TrinoSchemaLoader:
         formatted = []
         
         # Format priority tables first
-        formatted.append("**📊 Bảng Pre-Aggregated (Ưu tiên - Nhanh):**\n")
+        formatted.append("**✨ Bảng Pre-Aggregated (Ưu tiên - Nhanh):**\n")
         aggregated_views = ["state_summary", "merchant_analysis", "category_summary", 
                            "amount_summary", "hourly_summary", "daily_summary", 
                            "latest_metrics", "fraud_patterns", "time_period_analysis"]

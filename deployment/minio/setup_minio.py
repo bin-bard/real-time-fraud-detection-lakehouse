@@ -65,7 +65,7 @@ def setup_minio():
                 print(f"   ⚠️  {file_path} - {str(e)}")
                 
         print(f"\n🎉 MinIO setup completed successfully!")
-        print(f"📊 Data Lakehouse structure:")
+        print(f"✨ Data Lakehouse structure:")
         print(f"   📦 Bronze Layer: s3a://lakehouse/bronze/")
         print(f"   🥈 Silver Layer: s3a://lakehouse/silver/")
         print(f"   🥇 Gold Layer:   s3a://lakehouse/gold/ (Dimensional Model)")

@@ -102,7 +102,7 @@ def model_retraining_pipeline():
             
             # Log Spark job output for debugging
             logger.info("=" * 80)
-            logger.info("📊 Spark Job Output:")
+            logger.info("✨ Spark Job Output:")
             logger.info("=" * 80)
             logger.info(result.stdout)
             if result.stderr:
@@ -139,7 +139,7 @@ def model_retraining_pipeline():
         }
         
         try:
-            logger.info("📊 Checking MLflow experiments...")
+            logger.info("✨ Checking MLflow experiments...")
             
             # Check MLflow experiments using Python (mlflow container doesn't have curl)
             exp_result = subprocess.run(

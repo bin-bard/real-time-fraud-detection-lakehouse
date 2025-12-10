@@ -267,7 +267,7 @@ def load_model_from_mlflow():
                     "f1_score": run_data.data.metrics.get("f1_score", 0),
                     "auc": run_data.data.metrics.get("auc", 0)
                 }
-                logger.info(f"📊 Model metrics: Acc={model_info['accuracy']:.3f}, F1={model_info['f1_score']:.3f}, AUC={model_info['auc']:.3f}")
+                logger.info(f"Model metrics: Acc={model_info['accuracy']:.3f}, F1={model_info['f1_score']:.3f}, AUC={model_info['auc']:.3f}")
             except Exception as info_error:
                 logger.warning(f"Could not fetch model metrics: {info_error}")
                 model_info = {"model_name": MODEL_NAME, "model_version": model_version, "run_id": run_id}
@@ -556,7 +556,7 @@ async def predict_with_explanation(features: TransactionFeatures):
 @app.get("/predictions/history")
 def get_prediction_history(limit: int = 50):
     """
-    📊 Lấy lịch sử dự đoán từ database
+    ✨ Lấy lịch sử dự đoán từ database
     
     - limit: số lượng bản ghi tối đa (mặc định 50)
     """
@@ -797,14 +797,54 @@ async def predict_batch_raw(transactions: list[RawTransactionInput]):
     try:
         results = []
         for raw_trans in transactions:
-            # Convert to dict and call predict_fraud_raw logic
-            pred = await predict_fraud_raw(raw_trans)
+            # 1. Engineer features
+            engineered = engineer_features(
+                amt=raw_trans.amt,
+                hour=raw_trans.hour,
+                distance_km=raw_trans.distance_km,
+                merchant=raw_trans.merchant,
+                category=raw_trans.category,
+                age=raw_trans.age,
+                gender=raw_trans.gender,
+                day_of_week=raw_trans.day_of_week,
+                trans_num=raw_trans.trans_num
+            )
+            
+            # 2. Convert to TransactionFeatures
+            features = TransactionFeatures(
+                amt=engineered["amt"],
+                log_amount=engineered["log_amount"],
+                amount_bin=engineered["amount_bin"],
+                is_zero_amount=engineered["is_zero_amount"],
+                is_high_amount=engineered["is_high_amount"],
+                distance_km=engineered["distance_km"],
+                is_distant_transaction=engineered["is_distant_transaction"],
+                age=engineered["age"],
+                gender_encoded=engineered["gender_encoded"],
+                hour=engineered["hour"],
+                day_of_week=engineered["day_of_week"],
+                is_weekend=engineered["is_weekend"],
+                is_late_night=engineered["is_late_night"],
+                hour_sin=engineered["hour_sin"],
+                hour_cos=engineered["hour_cos"],
+                trans_num=engineered["trans_num"],
+                merchant=engineered["merchant"],
+                category=engineered["category"]
+            )
+            
+            # 3. Predict
+            pred = await predict_fraud(features)
             results.append(pred)
         
-        # Summary statistics
+        # Summary statistics with detailed logging
         total = len(results)
         fraud_count = sum(1 for r in results if r.is_fraud_predicted == 1)
         high_risk = sum(1 for r in results if r.risk_level == "HIGH")
+        medium_risk = sum(1 for r in results if r.risk_level == "MEDIUM")
+        low_risk = sum(1 for r in results if r.risk_level == "LOW")
+        
+        logger.info(f"Batch summary: total={total}, fraud={fraud_count}, "
+                   f"HIGH={high_risk}, MEDIUM={medium_risk}, LOW={low_risk}")
         
         return {
             "predictions": results,
@@ -813,6 +853,8 @@ async def predict_batch_raw(transactions: list[RawTransactionInput]):
                 "fraud_detected": fraud_count,
                 "fraud_rate": round(fraud_count / total * 100, 2) if total > 0 else 0,
                 "high_risk_count": high_risk,
+                "medium_risk_count": medium_risk,
+                "low_risk_count": low_risk,
                 "model_version": model_version if model_version else "rule_based_v1"
             }
         }
