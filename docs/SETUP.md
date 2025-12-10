@@ -449,7 +449,7 @@ Send Slack Alert (ALL risk levels: LOW/MEDIUM/HIGH)
 **2. Cập nhật .env:**
 
 ```bash
-SLACK_WEBHOOK_URL=https://hooks.slack.com/services/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
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR_WORKSPACE_ID/YOUR_CHANNEL_ID/YOUR_TOKEN
 ```
 
 **3. Rebuild service:**
