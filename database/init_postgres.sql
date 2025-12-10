@@ -62,19 +62,34 @@ CREATE INDEX idx_transactions_amt ON transactions(amt);
 -- Composite index cho fraud analysis
 CREATE INDEX idx_fraud_analysis ON transactions(is_fraud, trans_date_trans_time, amt);
 
--- Bảng để lưu fraud predictions từ ML model (optional - cho real-time scoring)
--- FIX: Thêm UNIQUE constraint trên trans_num để tránh duplicate
+-- Bảng để lưu fraud predictions từ ML model (cho real-time scoring)
+-- NOTE: Chỉ lưu predictions cho REAL transactions từ Kafka/Bronze streaming
+-- Chatbot/manual predictions (CHAT_*, MANUAL_*) không lưu vào đây
+-- Real-time flow: Kafka CDC → Bronze streaming → transactions table → FastAPI prediction → fraud_predictions
 CREATE TABLE IF NOT EXISTS fraud_predictions (
     id SERIAL PRIMARY KEY,
-    trans_num VARCHAR(100) UNIQUE NOT NULL,  -- FIX: UNIQUE để tránh duplicate
+    trans_num VARCHAR(100) UNIQUE NOT NULL,
     prediction_score NUMERIC(5, 4),
     is_fraud_predicted SMALLINT,
     model_version VARCHAR(50),
-    prediction_time TIMESTAMP DEFAULT NOW()
+    prediction_time TIMESTAMP DEFAULT NOW(),
+    
+    -- Foreign key: Chỉ lưu predictions cho transactions có trong DB
+    -- Ensures data integrity for real-time Kafka integration
+    CONSTRAINT fraud_predictions_trans_num_fkey 
+    FOREIGN KEY (trans_num) REFERENCES transactions(trans_num)
 );
 
--- Index để query nhanh
+-- Indexes để query nhanh
 CREATE INDEX IF NOT EXISTS idx_fraud_predictions_time ON fraud_predictions(prediction_time DESC);
+CREATE INDEX IF NOT EXISTS idx_fraud_predictions_model_version ON fraud_predictions(model_version);
+
+-- Add table comment for documentation
+COMMENT ON TABLE fraud_predictions IS 
+'Stores fraud predictions for REAL-TIME transactions only.
+- Real-time flow: Kafka CDC → Bronze streaming → transactions table → FastAPI prediction → fraud_predictions
+- Chatbot/manual predictions (CHAT_*, MANUAL_*) are NOT saved here (API skips them)
+- Foreign key ensures data integrity: only predictions for existing transactions are stored';
 
 -- Bảng chat_history cho chatbot (v2.0)
 CREATE TABLE IF NOT EXISTS chat_history (

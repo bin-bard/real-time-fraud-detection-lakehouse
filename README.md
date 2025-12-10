@@ -139,6 +139,12 @@ docker compose up -d --build
 
 **⏳ Thời gian khởi động:** ~5-10 phút (tải images + khởi tạo services)
 
+**✅ Database tự động khởi tạo:**
+
+- PostgreSQL tự động chạy `database/init_postgres.sql` khi container khởi động lần đầu
+- Tất cả tables, indexes, constraints, và comments được tạo sẵn
+- Không cần chạy migration thủ công!
+
 ### 3. Tải dữ liệu và quản lý Data Producer
 
 #### 📌 **Data Producer có 2 chế độ hoạt động:**

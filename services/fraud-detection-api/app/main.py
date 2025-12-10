@@ -84,10 +84,16 @@ def get_postgres_conn():
 def save_prediction_to_db(trans_num: str, prediction: int, probability: float, model_ver: str):
     """
     Save prediction to fraud_predictions table
-    NOTE: Chỉ lưu khi có ML model prediction. Rule-based fallback không lưu vì:
-    - Manual predictions không có transaction record trong DB
+    NOTE: Chỉ lưu REAL-TIME predictions từ Kafka/Bronze streaming.
+    - Chatbot/Manual predictions (CHAT_*, MANUAL_*) KHÔNG lưu vì không có transaction record
     - Foreign key constraint: fraud_predictions.trans_num -> transactions.trans_num
+    - Real-time từ Kafka sẽ có transaction record trước khi predict
     """
+    # Skip saving for chatbot/manual predictions
+    if trans_num.startswith(('CHAT_', 'MANUAL_')):
+        logger.info(f"⏭️ Skipping DB save for manual/chatbot prediction: {trans_num}")
+        return True
+    
     # Skip saving if using rule-based fallback
     if "rule_based" in model_ver.lower() or "fallback" in model_ver.lower():
         logger.info(f"⏭️ Skipping DB save for rule-based prediction: {trans_num}")
