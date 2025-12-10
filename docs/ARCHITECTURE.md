@@ -32,22 +32,22 @@ Xây dựng **Modern Data Platform** giải quyết bài toán phát hiện gian
 
 ### 1.2. Phạm vi dữ liệu
 
-| Thông tin            | Giá trị                                   |
-| --------------------- | ------------------------------------------- |
-| **Dataset**     | Sparkov Credit Card Transactions (Kaggle)   |
-| **Thời gian**  | 01/2019 - 12/2020                           |
-| **Số lượng** | 1.8 triệu giao dịch                       |
-| **Fraud rate**  | 0.5-1% (tỉ lệ thực tế trong production) |
-| **Mode**        | Streaming với checkpoint recovery          |
+| Thông tin      | Giá trị                                   |
+| -------------- | ----------------------------------------- |
+| **Dataset**    | Sparkov Credit Card Transactions (Kaggle) |
+| **Thời gian**  | 01/2019 - 12/2020                         |
+| **Số lượng**   | 1.8 triệu giao dịch                       |
+| **Fraud rate** | 0.5-1% (tỉ lệ thực tế trong production)   |
+| **Mode**       | Streaming với checkpoint recovery         |
 
 ### 1.3. Hiệu năng đạt được
 
-| Metric                         | Giá trị        | Ghi chú                         |
-| ------------------------------ | ---------------- | -------------------------------- |
+| Metric                   | Giá trị          | Ghi chú                          |
+| ------------------------ | ---------------- | -------------------------------- |
 | **ML Accuracy**          | 92.8%            | RandomForest on balanced dataset |
 | **AUC-ROC**              | 98.4%            | Excellent discrimination         |
 | **Prediction Latency**   | < 100ms          | FastAPI inference time           |
-| **End-to-end Latency**   | < 1s             | Transaction → Slack Alert       |
+| **End-to-end Latency**   | < 1s             | Transaction → Slack Alert        |
 | **Streaming Throughput** | 200-500 tx/batch | 10-second micro-batches          |
 
 ---
@@ -333,7 +333,7 @@ is_fraud
 SELECT * FROM delta.default.fact_transactions LIMIT 10;
 
 -- Join với dimensions
-SELECT 
+SELECT
   c.first_name, c.last_name,
   m.merchant_name,
   t.amt,
@@ -576,11 +576,11 @@ class SchemaLoader:
     def __init__(self, ttl=300):  # 5 minutes
         self.cache = {}
         self.ttl = ttl
-  
+
     def get_schema(self, force_refresh=False):
         if not force_refresh and self._is_cache_valid('schema'):
             return self.cache['schema']['data']
-      
+
         # Query Trino for fresh schema
         schema = self._query_trino_schema()
         self._set_cache('schema', schema)
@@ -601,7 +601,7 @@ class SchemaLoader:
 ```yaml
 system_prompt: |
   You are a fraud detection assistant...
-  
+
 tools_description: |
   1. QueryDatabase: Execute SQL...
   2. PredictFraud: Predict fraud...
@@ -669,7 +669,7 @@ CREATE TABLE fraud_predictions (
     is_fraud_predicted SMALLINT,
     model_version VARCHAR(50),
     prediction_time TIMESTAMP,
-  
+
     -- Foreign key (only real transactions)
     CONSTRAINT fraud_predictions_trans_num_fkey
     FOREIGN KEY (trans_num) REFERENCES transactions(trans_num)
@@ -731,12 +731,12 @@ def save_prediction_to_db(trans_num: str, ...):
     if trans_num.startswith(('CHAT_', 'MANUAL_')):
         logger.info(f"⏭️ Skipping DB save for manual: {trans_num}")
         return True
-  
+
     # Skip rule-based fallback
     if "rule_based" in model_version.lower():
         logger.info(f"⏭️ Skipping DB save for rule-based")
         return True
-  
+
     # Real transactions: Save to DB
     try:
         INSERT INTO fraud_predictions (trans_num, ...)
@@ -791,9 +791,9 @@ AI Analysis:
 Raw CDC data từ Kafka:
 
 ```
-trans_date_trans_time, cc_num, merchant, category, amt, 
-first, last, gender, street, city, state, zip, 
-lat, long, city_pop, job, dob, trans_num, unix_time, 
+trans_date_trans_time, cc_num, merchant, category, amt,
+first, last, gender, street, city, state, zip,
+lat, long, city_pop, job, dob, trans_num, unix_time,
 merch_lat, merch_long, is_fraud
 ```
 
@@ -826,8 +826,8 @@ Bronze columns + Engineered features:
 
 **Merchant (3 features):**
 
-- merchant_hash, merchant_frequency, is_fraud_merchant
-  (prefix = "fraud_")
+- merchant*hash, merchant_frequency, is_fraud_merchant
+  (prefix = "fraud*")
 
 **Interaction (6 features):**
 
@@ -867,23 +867,23 @@ fact_transactions.category_id → dim_category.category_id
 ML_FEATURES = [
     # Amount
     'amt', 'log_amount', 'amount_bin', 'is_high_amount',
-  
+
     # Geographic
     'distance_km', 'is_distant_transaction',
-  
+
     # Time
     'hour', 'day_of_week', 'is_weekend', 'is_late_night',
     'hour_sin', 'hour_cos',
-  
+
     # Demographic
     'age', 'gender_encoded',
-  
+
     # Category
     'category_encoded', 'is_high_risk_category',
-  
+
     # Merchant
     'is_fraud_merchant',
-  
+
     # Interaction
     'amt_distance_interaction', 'amt_hour_interaction',
     'distance_hour_interaction'
@@ -1024,9 +1024,9 @@ async def reload_model():
 
 ### 8.1. Chi tiết 16 services
 
-| Service                             | Technology            | Version | Port       | Mô tả                 |
-| ----------------------------------- | --------------------- | ------- | ---------- | ----------------------- |
-| **postgres**                  | PostgreSQL            | 14      | 5432       | OLTP database với CDC  |
+| Service                       | Technology            | Version | Port       | Mô tả                   |
+| ----------------------------- | --------------------- | ------- | ---------- | ----------------------- |
+| **postgres**                  | PostgreSQL            | 14      | 5432       | OLTP database với CDC   |
 | **zookeeper**                 | Apache Zookeeper      | 7.5.0   | 2181       | Kafka coordination      |
 | **kafka**                     | Apache Kafka          | 3.5     | 9092       | Message broker          |
 | **debezium-connect**          | Debezium              | 2.5     | 8083       | CDC connector           |

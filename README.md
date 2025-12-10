@@ -32,8 +32,8 @@ Dự án xây dựng pipeline xử lý dữ liệu end-to-end phát hiện gian 
 
 ### Yêu cầu hệ thống
 
-| Thành phần       | Yêu cầu tối thiểu            | Khuyến nghị  |
-| ------------------ | -------------------------------- | -------------- |
+| Thành phần   | Yêu cầu tối thiểu                | Khuyến nghị    |
+| ------------ | -------------------------------- | -------------- |
 | **CPU**      | 6 cores                          | 8+ cores       |
 | **RAM**      | 10 GB                            | 16 GB          |
 | **Disk**     | 30 GB free                       | 50 GB free     |
@@ -140,20 +140,20 @@ docker exec airflow-scheduler airflow dags trigger model_retraining_taskflow
 
 ## Công nghệ sử dụng
 
-| Lớp                     | Công nghệ                    | Phiên bản | Cổng      | Mô tả                        |
-| ------------------------ | ------------------------------ | ----------- | ---------- | ------------------------------ |
-| **Data Source**    | PostgreSQL                     | 14          | 5432       | OLTP database với CDC enabled |
-| **CDC**            | Debezium                       | 2.5         | 8083       | Change Data Capture connector  |
-| **Streaming**      | Apache Kafka                   | 3.5         | 9092       | Message broker                 |
-| **Processing**     | Apache Spark                   | 3.4.1       | 8080       | Streaming + Batch              |
-| **Storage**        | Delta Lake + MinIO             | 2.4 / 2023  | 9000, 9001 | ACID Lakehouse                 |
-| **Metastore**      | Hive Metastore                 | 3.1.3       | 9083       | Metadata cache (optional)      |
-| **Query Engine**   | Trino                          | 428         | 8085       | Distributed SQL                |
-| **Orchestration**  | Apache Airflow                 | 2.8.0       | 8081       | Workflow scheduler             |
-| **ML Tracking**    | MLflow                         | 2.8.0       | 5001       | Model versioning               |
-| **Prediction API** | FastAPI                        | 0.104       | 8000       | Real-time ML inference         |
-| **Chatbot**        | Streamlit + LangChain + Gemini | -           | 8501       | AI assistant (Vietnamese)      |
-| **BI Dashboard**   | Metabase                       | -           | 3000       | Business intelligence          |
+| Lớp                | Công nghệ                      | Phiên bản  | Cổng       | Mô tả                         |
+| ------------------ | ------------------------------ | ---------- | ---------- | ----------------------------- |
+| **Data Source**    | PostgreSQL                     | 14         | 5432       | OLTP database với CDC enabled |
+| **CDC**            | Debezium                       | 2.5        | 8083       | Change Data Capture connector |
+| **Streaming**      | Apache Kafka                   | 3.5        | 9092       | Message broker                |
+| **Processing**     | Apache Spark                   | 3.4.1      | 8080       | Streaming + Batch             |
+| **Storage**        | Delta Lake + MinIO             | 2.4 / 2023 | 9000, 9001 | ACID Lakehouse                |
+| **Metastore**      | Hive Metastore                 | 3.1.3      | 9083       | Metadata cache (optional)     |
+| **Query Engine**   | Trino                          | 428        | 8085       | Distributed SQL               |
+| **Orchestration**  | Apache Airflow                 | 2.8.0      | 8081       | Workflow scheduler            |
+| **ML Tracking**    | MLflow                         | 2.8.0      | 5001       | Model versioning              |
+| **Prediction API** | FastAPI                        | 0.104      | 8000       | Real-time ML inference        |
+| **Chatbot**        | Streamlit + LangChain + Gemini | -          | 8501       | AI assistant (Vietnamese)     |
+| **BI Dashboard**   | Metabase                       | -          | 3000       | Business intelligence         |
 
 ---
 
@@ -252,12 +252,12 @@ Extract Features → Train → Evaluate → Register MLflow → Deploy API
 
 ## Hiệu năng hệ thống
 
-| Metric                         | Giá trị          | Ghi chú                         |
-| ------------------------------ | ------------------ | -------------------------------- |
+| Metric                   | Giá trị            | Ghi chú                          |
+| ------------------------ | ------------------ | -------------------------------- |
 | **ML Accuracy**          | 96.8%              | RandomForest on balanced dataset |
 | **AUC-ROC**              | 99.5%              | Excellent discrimination         |
 | **Prediction Latency**   | < 100ms            | FastAPI inference time           |
-| **End-to-end Latency**   | < 1s               | Transaction → Slack Alert       |
+| **End-to-end Latency**   | < 1s               | Transaction → Slack Alert        |
 | **Streaming Throughput** | 200-500 tx/batch   | 10-second micro-batches          |
 | **Data Volume**          | 1.2M+ transactions | Sparkov dataset                  |
 | **Fraud Rate**           | 0.5-1%             | Realistic imbalanced data        |

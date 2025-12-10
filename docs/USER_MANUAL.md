@@ -47,12 +47,14 @@ Chatbot tự động hiểu câu hỏi tiếng Việt/Anh và tạo SQL query.
 ```
 
 **Chatbot sẽ:**
+
 1. Hiểu câu hỏi bằng ngôn ngữ tự nhiên
 2. Tự động tạo SQL query từ Trino database
 3. Thực thi và trả về kết quả với giải thích
 4. Hiển thị SQL query đã dùng (trong expander "SQL Query Used")
 
 **Kết quả:**
+
 - Bảng dữ liệu (DataFrame)
 - Chart/Plot (nếu phù hợp)
 - Giải thích insights
@@ -76,9 +78,11 @@ Dự đoán xem giao dịch có phải fraud không dựa trên ML model.
 **Thông tin cần thiết:**
 
 **Bắt buộc:**
+
 - `amt`: Số tiền giao dịch (USD)
 
 **Tùy chọn (càng nhiều càng chính xác):**
+
 - `hour`: Giờ giao dịch (0-23)
 - `distance_km`: Khoảng cách từ địa chỉ khách hàng
 - `merchant`: Tên merchant
@@ -88,6 +92,7 @@ Dự đoán xem giao dịch có phải fraud không dựa trên ML model.
 - `gender`: Giới tính (M/F)
 
 **Chatbot sẽ:**
+
 1. Trích xuất thông tin giao dịch từ câu hỏi
 2. Gọi FastAPI `/predict/explained`
 3. Trả về kết quả chi tiết:
@@ -129,6 +134,7 @@ Phân tích chi tiết:
 ```
 
 **Kết quả:**
+
 - **Model info**: Version, accuracy, AUC, precision, recall
 - **Prediction history**: 10 dự đoán gần nhất từ database
 - **Knowledge**: Giải thích từ Gemini LLM
@@ -140,6 +146,7 @@ Phân tích chi tiết:
 Nếu không muốn dùng chat, có thể nhập trực tiếp vào form.
 
 **Cách sử dụng:**
+
 1. Mở sidebar → **"Manual Prediction Form"**
 2. Nhập các thông tin:
    - Amount (bắt buộc)
@@ -152,6 +159,7 @@ Nếu không muốn dùng chat, có thể nhập trực tiếp vào form.
 4. Xem kết quả với risk level + explanation
 
 **Lợi ích:**
+
 - Nhanh hơn typing
 - Không cần nhớ cú pháp
 - Validation tự động
@@ -163,6 +171,7 @@ Nếu không muốn dùng chat, có thể nhập trực tiếp vào form.
 Dự đoán hàng loạt transactions từ file CSV.
 
 **Cách sử dụng:**
+
 1. Mở sidebar → **"CSV Batch Prediction"**
 2. Prepare CSV file với các cột:
    ```csv
@@ -176,6 +185,7 @@ Dự đoán hàng loạt transactions từ file CSV.
 5. Download kết quả (CSV với prediction columns)
 
 **Output columns:**
+
 - Original columns (amt, hour, distance_km, ...)
 - `is_fraud_predicted` (0 hoặc 1)
 - `fraud_probability` (0.0 - 1.0)
@@ -186,20 +196,24 @@ Dự đoán hàng loạt transactions từ file CSV.
 ### 1.6. Sidebar Features
 
 **■ Gemini API Status**
+
 - ✅ Connected: API key hợp lệ
 - ❌ Failed: Kiểm tra lại key hoặc network
 
 **■ ML Model Info**
+
 - Model version (e.g., `v1.0.20231210`)
 - Accuracy, AUC, Precision, Recall
 - Training date
 - Number of features
 
 **■ Database Connection**
+
 - ✅ Connected: Trino query engine sẵn sàng
 - ❌ Failed: Kiểm tra Trino service
 
 **■ Test Connection Button**
+
 - Test Gemini API với prompt mẫu
 - Kiểm tra Trino với simple query
 
@@ -208,15 +222,18 @@ Dự đoán hàng loạt transactions từ file CSV.
 ### 1.7. Session Management
 
 **Lịch sử chat:**
+
 - Mỗi session được lưu vào database (`chat_history` table)
 - Session ID tự động tạo
 - Có thể xem lại lịch sử: "Lịch sử chat của tôi?"
 
 **Clear chat:**
+
 - Sidebar → "Clear Chat History"
 - Xóa messages hiện tại (không xóa database)
 
 **New session:**
+
 - Refresh page (F5)
 - Hoặc clear chat và bắt đầu mới
 
@@ -253,11 +270,13 @@ docker-compose up -d spark-realtime-prediction
 ```
 
 **Monitor logs:**
+
 ```bash
 docker logs spark-realtime-prediction --tail 100 -f
 ```
 
 **Expected output:**
+
 ```
 INFO - 📊 Batch 123: Processing 25 transactions from CDC events
 INFO - Transactions processed: 25
@@ -293,6 +312,7 @@ AI Analysis:
 ```
 
 **Alert Policy:**
+
 - **Gửi tất cả fraud** (không chỉ HIGH risk)
 - LOW risk: Màu xanh
 - MEDIUM risk: Màu vàng
@@ -312,22 +332,22 @@ docker exec postgres psql -U postgres -d frauddb -c "SELECT * FROM fraud_predict
 
 ```sql
 -- Số lượng fraud predictions hôm nay
-SELECT COUNT(*) 
-FROM fraud_predictions 
-WHERE prediction_time::date = CURRENT_DATE 
+SELECT COUNT(*)
+FROM fraud_predictions
+WHERE prediction_time::date = CURRENT_DATE
   AND is_fraud_predicted = 1;
 
 -- High-risk transactions
 SELECT p.trans_num, t.amt, t.merchant, p.prediction_score
 FROM fraud_predictions p
 JOIN transactions t ON p.trans_num = t.trans_num
-WHERE p.is_fraud_predicted = 1 
+WHERE p.is_fraud_predicted = 1
   AND p.prediction_score > 0.8
 ORDER BY p.prediction_time DESC
 LIMIT 20;
 
 -- Fraud rate theo giờ
-SELECT 
+SELECT
   EXTRACT(HOUR FROM t.trans_date_trans_time) AS hour,
   COUNT(*) AS total_transactions,
   SUM(CASE WHEN p.is_fraud_predicted=1 THEN 1 ELSE 0 END) AS fraud_count,
@@ -349,6 +369,7 @@ docker exec postgres psql -U postgres -d frauddb -c "INSERT INTO transactions (t
 ```
 
 **Expected:**
+
 1. Debezium capture → Kafka (< 1ms)
 2. Spark reads CDC event (10s batch)
 3. API predicts fraud
@@ -360,6 +381,7 @@ docker exec postgres psql -U postgres -d frauddb -c "INSERT INTO transactions (t
 ### 2.5. Disable/Enable Alerts
 
 **Disable Slack alerts (chỉ save predictions):**
+
 ```bash
 # Xóa SLACK_WEBHOOK_URL trong .env
 # Hoặc comment out
@@ -369,6 +391,7 @@ docker-compose up -d --build spark-realtime-prediction
 ```
 
 **Enable lại:**
+
 ```bash
 # Uncomment SLACK_WEBHOOK_URL trong .env
 SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
@@ -394,11 +417,13 @@ Docs: **http://localhost:8000/docs** (Swagger UI)
 Kiểm tra API health và model status.
 
 **Request:**
+
 ```bash
 curl http://localhost:8000/health
 ```
 
 **Response:**
+
 ```json
 {
   "status": "ok",
@@ -414,11 +439,13 @@ curl http://localhost:8000/health
 Xem thông tin model hiện tại.
 
 **Request:**
+
 ```bash
 curl http://localhost:8000/model/info
 ```
 
 **Response:**
+
 ```json
 {
   "model_name": "fraud_detection_model",
@@ -442,6 +469,7 @@ curl http://localhost:8000/model/info
 Dự đoán fraud cho 1 transaction (real-time alert service sử dụng).
 
 **Request:**
+
 ```bash
 curl -X POST http://localhost:8000/predict/raw \
   -H "Content-Type: application/json" \
@@ -457,6 +485,7 @@ curl -X POST http://localhost:8000/predict/raw \
 ```
 
 **Response:**
+
 ```json
 {
   "is_fraud_predicted": 1,
@@ -473,6 +502,7 @@ curl -X POST http://localhost:8000/predict/raw \
 Dự đoán fraud với giải thích từ Gemini LLM (chatbot sử dụng).
 
 **Request:**
+
 ```bash
 curl -X POST http://localhost:8000/predict/explained \
   -H "Content-Type: application/json" \
@@ -487,6 +517,7 @@ curl -X POST http://localhost:8000/predict/explained \
 ```
 
 **Response:**
+
 ```json
 {
   "is_fraud_predicted": 1,
@@ -504,6 +535,7 @@ curl -X POST http://localhost:8000/predict/explained \
 Dự đoán hàng loạt transactions (CSV upload sử dụng).
 
 **Request:**
+
 ```bash
 curl -X POST http://localhost:8000/predict/batch \
   -H "Content-Type: application/json" \
@@ -517,6 +549,7 @@ curl -X POST http://localhost:8000/predict/batch \
 ```
 
 **Response:**
+
 ```json
 {
   "results": [
@@ -548,13 +581,14 @@ curl -X POST http://localhost:8000/predict/batch \
 
 ### 3.2. Risk Level Thresholds
 
-| Risk Level | Fraud Probability | Mô tả |
-|-----------|------------------|-------|
-| **LOW** | < 50% | Giao dịch hợp lệ, rủi ro thấp |
-| **MEDIUM** | 50% - 80% | Cần theo dõi, có dấu hiệu nghi ngờ |
-| **HIGH** | > 80% | Rủi ro cao, gần chắc chắn fraud |
+| Risk Level | Fraud Probability | Mô tả                              |
+| ---------- | ----------------- | ---------------------------------- |
+| **LOW**    | < 50%             | Giao dịch hợp lệ, rủi ro thấp      |
+| **MEDIUM** | 50% - 80%         | Cần theo dõi, có dấu hiệu nghi ngờ |
+| **HIGH**   | > 80%             | Rủi ro cao, gần chắc chắn fraud    |
 
-**Lưu ý:** 
+**Lưu ý:**
+
 - Alert service gửi Slack cho **TẤT CẢ** fraud (kể cả LOW)
 - Có thể tùy chỉnh threshold trong code
 
@@ -570,6 +604,7 @@ curl -X POST http://localhost:8000/predict/batch \
 **2 DAGs chính:**
 
 #### lakehouse_pipeline_taskflow
+
 - **Schedule**: Mỗi 5 phút
 - **Workflow**:
   1. Bronze → Silver (feature engineering)
@@ -577,11 +612,13 @@ curl -X POST http://localhost:8000/predict/batch \
   3. Optimize Delta tables (compaction, vacuum)
 
 **Trigger manual:**
+
 ```bash
 docker exec airflow-scheduler airflow dags trigger lakehouse_pipeline_taskflow
 ```
 
 #### model_retraining_taskflow
+
 - **Schedule**: Hàng ngày 2h sáng
 - **Workflow**:
   1. Extract features từ Silver layer
@@ -592,11 +629,13 @@ docker exec airflow-scheduler airflow dags trigger lakehouse_pipeline_taskflow
   6. Reload model trong FastAPI
 
 **Trigger manual:**
+
 ```bash
 docker exec airflow-scheduler airflow dags trigger model_retraining_taskflow
 ```
 
 **Monitor DAG runs:**
+
 - Vào Airflow UI → "DAGs"
 - Click vào DAG name
 - Xem "Graph View" hoặc "Grid View"
@@ -611,21 +650,25 @@ docker exec airflow-scheduler airflow dags trigger model_retraining_taskflow
 **Chức năng:**
 
 #### Experiments
+
 - Xem tất cả training runs
 - Compare metrics giữa các runs
 - Filter by tags, parameters
 
 #### Models
+
 - Registered models với version history
 - Model stages: None → Staging → Production → Archived
 - Download model artifacts
 
 #### Metrics
+
 - Accuracy, AUC-ROC, Precision, Recall
 - Confusion Matrix (plot)
 - Feature importances
 
 **Xem model Production:**
+
 1. Vào "Models" tab
 2. Click "fraud_detection_model"
 3. Xem version có stage "Production"
@@ -639,12 +682,14 @@ docker exec airflow-scheduler airflow dags trigger model_retraining_taskflow
 **Credentials**: minioadmin / minioadmin
 
 **Buckets:**
+
 - `lakehouse/bronze/` - Raw CDC data (Delta Lake)
 - `lakehouse/silver/` - Engineered features (Delta Lake)
 - `lakehouse/gold/` - Star schema (Delta Lake)
 - `lakehouse/checkpoints/` - Spark streaming offsets
 
 **Quản lý:**
+
 - Browse files
 - Delete old data
 - Monitor storage usage
@@ -657,6 +702,7 @@ docker exec airflow-scheduler airflow dags trigger model_retraining_taskflow
 **No credentials required**
 
 **Truy vấn qua CLI:**
+
 ```bash
 docker exec trino trino --catalog delta --schema default
 ```
@@ -668,15 +714,15 @@ docker exec trino trino --catalog delta --schema default
 SHOW TABLES;
 
 -- Query Gold layer
-SELECT state, COUNT(*) as fraud_count 
-FROM fact_transactions 
-WHERE is_fraud=1 
-GROUP BY state 
-ORDER BY fraud_count DESC 
+SELECT state, COUNT(*) as fraud_count
+FROM fact_transactions
+WHERE is_fraud=1
+GROUP BY state
+ORDER BY fraud_count DESC
 LIMIT 5;
 
 -- Join dimensions
-SELECT 
+SELECT
   c.first_name, c.last_name,
   m.merchant_name,
   t.amt,
@@ -693,6 +739,7 @@ LIMIT 10;
 ### 4.5. PostgreSQL (Direct DB Access)
 
 **Connection:**
+
 - Host: `localhost`
 - Port: `5432`
 - Database: `frauddb`
@@ -700,6 +747,7 @@ LIMIT 10;
 - Password: `postgres123`
 
 **Tools:**
+
 - psql (command-line)
 - DBeaver (GUI)
 - pgAdmin (GUI)
@@ -708,12 +756,12 @@ LIMIT 10;
 
 ```sql
 -- Recent predictions
-SELECT * FROM fraud_predictions 
-ORDER BY prediction_time DESC 
+SELECT * FROM fraud_predictions
+ORDER BY prediction_time DESC
 LIMIT 20;
 
 -- Fraud rate today
-SELECT 
+SELECT
   COUNT(*) AS total,
   SUM(CASE WHEN is_fraud=1 THEN 1 ELSE 0 END) AS fraud_count,
   ROUND(100.0 * SUM(CASE WHEN is_fraud=1 THEN 1 ELSE 0 END) / COUNT(*), 2) AS fraud_rate
@@ -721,8 +769,8 @@ FROM transactions
 WHERE trans_date_trans_time::date = CURRENT_DATE;
 
 -- Chat history
-SELECT * FROM chat_history 
-ORDER BY timestamp DESC 
+SELECT * FROM chat_history
+ORDER BY timestamp DESC
 LIMIT 10;
 ```
 
@@ -733,31 +781,37 @@ LIMIT 10;
 ### 5.1. Start/Stop Services
 
 **Start all:**
+
 ```bash
 docker-compose up -d
 ```
 
 **Stop all:**
+
 ```bash
 docker-compose down
 ```
 
 **Start specific service:**
+
 ```bash
 docker-compose up -d <service_name>
 ```
 
 **Stop specific service:**
+
 ```bash
 docker-compose stop <service_name>
 ```
 
 **Restart service:**
+
 ```bash
 docker-compose restart <service_name>
 ```
 
 **Rebuild and restart:**
+
 ```bash
 docker-compose up -d --build <service_name>
 ```
@@ -780,6 +834,7 @@ docker-compose up -d spark-streaming spark-realtime-prediction
 ```
 
 **Script helper (PowerShell):**
+
 ```bash
 # Trong folder scripts/
 .\restart-streaming-services.ps1
@@ -790,22 +845,26 @@ docker-compose up -d spark-streaming spark-realtime-prediction
 ### 5.3. View Logs
 
 **Real-time logs (follow):**
+
 ```bash
 docker logs <service_name> --tail 100 -f
 ```
 
 **Last N lines:**
+
 ```bash
 docker logs <service_name> --tail 50
 ```
 
 **Specific time range:**
+
 ```bash
 docker logs <service_name> --since 10m
 docker logs <service_name> --since 2023-12-10T10:00:00
 ```
 
 **Save logs to file:**
+
 ```bash
 docker logs <service_name> > logs.txt 2>&1
 ```
@@ -855,27 +914,32 @@ docker cp mlflow:/mlflow/mlruns ./backup/mlruns_$(date +%Y%m%d)
 ### 5.5. Cleanup & Maintenance
 
 **Remove stopped containers:**
+
 ```bash
 docker-compose rm -f
 ```
 
 **Remove old images:**
+
 ```bash
 docker image prune -a
 ```
 
 **Remove unused volumes:**
+
 ```bash
 docker volume prune
 ```
 
 **Clean all (RESET EVERYTHING):**
+
 ```bash
 docker-compose down -v
 docker system prune -a --volumes
 ```
 
 **Optimize Delta tables:**
+
 ```bash
 # Chạy DAG optimize task
 docker exec airflow-scheduler airflow dags trigger lakehouse_pipeline_taskflow
@@ -886,16 +950,19 @@ docker exec airflow-scheduler airflow dags trigger lakehouse_pipeline_taskflow
 ### 5.6. Monitoring Resource Usage
 
 **Container stats:**
+
 ```bash
 docker stats
 ```
 
 **Disk usage:**
+
 ```bash
 docker system df
 ```
 
 **Network usage:**
+
 ```bash
 docker network inspect real-time-fraud-detection-lakehouse_default
 ```
@@ -904,21 +971,22 @@ docker network inspect real-time-fraud-detection-lakehouse_default
 
 ## Troubleshooting Quick Reference
 
-| Vấn đề | Giải pháp |
-|--------|----------|
+| Vấn đề                           | Giải pháp                                                |
+| -------------------------------- | -------------------------------------------------------- |
 | **Chatbot không kết nối Gemini** | Kiểm tra `GEMINI_API_KEY` trong `.env`, test tại sidebar |
-| **Slack alert 404** | Tạo webhook mới, update `.env`, rebuild service |
-| **Model chưa train** | Trigger `model_retraining_taskflow` DAG |
-| **Prediction time sai timezone** | Đổi PostgreSQL timezone hoặc code |
-| **Services không start** | Kiểm tra logs, tăng RAM Docker, free disk space |
-| **Bronze layer empty** | Chạy data producer hoặc bulk load |
-| **Trino query timeout** | Tăng `query.max-execution-time` trong config |
+| **Slack alert 404**              | Tạo webhook mới, update `.env`, rebuild service          |
+| **Model chưa train**             | Trigger `model_retraining_taskflow` DAG                  |
+| **Prediction time sai timezone** | Đổi PostgreSQL timezone hoặc code                        |
+| **Services không start**         | Kiểm tra logs, tăng RAM Docker, free disk space          |
+| **Bronze layer empty**           | Chạy data producer hoặc bulk load                        |
+| **Trino query timeout**          | Tăng `query.max-execution-time` trong config             |
 
 ➜ Chi tiết: **[Developer Guide - Troubleshooting](DEVELOPER_GUIDE.md#troubleshooting)**
 
 ---
 
 **Tài liệu khác:**
+
 - [Setup Guide](SETUP.md) - Cài đặt hệ thống
 - [Architecture](ARCHITECTURE.md) - Kiến trúc 6 tầng
 - [Developer Guide](DEVELOPER_GUIDE.md) - Code structure, optimization

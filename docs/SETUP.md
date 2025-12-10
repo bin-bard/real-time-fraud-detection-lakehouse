@@ -21,12 +21,12 @@ Hướng dẫn cài đặt hệ thống Real-Time Fraud Detection Lakehouse từ
 
 ### Phần cứng
 
-| Thành phần | Tối thiểu | Khuyến nghị | Ghi chú |
-|-----------|-----------|-------------|---------|
-| **CPU** | 6 cores | 8+ cores | Spark + Airflow cần multi-core |
-| **RAM** | 10 GB | 16 GB | Spark executors chiếm 4-6GB |
-| **Disk** | 30 GB free | 50 GB free | Delta Lake + Docker images |
-| **Network** | Stable Internet | High-speed | Download Docker images (~10GB) |
+| Thành phần  | Tối thiểu       | Khuyến nghị | Ghi chú                        |
+| ----------- | --------------- | ----------- | ------------------------------ |
+| **CPU**     | 6 cores         | 8+ cores    | Spark + Airflow cần multi-core |
+| **RAM**     | 10 GB           | 16 GB       | Spark executors chiếm 4-6GB    |
+| **Disk**    | 30 GB free      | 50 GB free  | Delta Lake + Docker images     |
+| **Network** | Stable Internet | High-speed  | Download Docker images (~10GB) |
 
 ### Phần mềm
 
@@ -80,6 +80,7 @@ docker exec airflow-scheduler airflow dags trigger model_retraining_taskflow
 ```
 
 **Hoàn tất!** Truy cập:
+
 - Chatbot: http://localhost:8501
 - Airflow: http://localhost:8081 (admin/admin)
 - MLflow: http://localhost:5001
@@ -144,6 +145,7 @@ API_PORT=8000
 ```
 
 **Lưu ý:**
+
 - `GEMINI_API_KEY`: **Bắt buộc** để Chatbot hoạt động
 - `SLACK_WEBHOOK_URL`: Tùy chọn, nếu không có thì bỏ trống (Real-time alerts sẽ không gửi Slack)
 - Các biến khác giữ nguyên giá trị mặc định
@@ -169,6 +171,7 @@ GEMINI_API_KEY=AIzaSyXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 ### Test API Key
 
 Sau khi khởi động Chatbot, kiểm tra tại sidebar:
+
 - ✅ **Gemini API Status**: Connected
 - Nếu lỗi: Kiểm tra lại API key hoặc network
 
@@ -183,6 +186,7 @@ docker-compose up -d
 ```
 
 **16 services sẽ được khởi động:**
+
 1. **postgres** - OLTP database (5432)
 2. **zookeeper** - Kafka coordination
 3. **kafka** - Message broker (9092)
@@ -203,36 +207,40 @@ docker-compose up -d
 ### Option 2: Khởi động từng nhóm
 
 **A. Core services (Database + Storage)**
+
 ```bash
 docker-compose up -d postgres minio kafka zookeeper debezium-connect
 ```
 
 **B. Processing layer**
+
 ```bash
 docker-compose up -d spark-streaming spark-silver spark-gold
 ```
 
 **C. ML & API**
+
 ```bash
 docker-compose up -d mlflow fraud-detection-api
 ```
 
 **D. Chatbot only**
+
 ```bash
 docker-compose up -d fraud-chatbot
 ```
 
 ### Thời gian khởi động
 
-| Service | Thời gian | Ghi chú |
-|---------|----------|---------|
-| PostgreSQL | 5-10s | Tự động chạy `init_postgres.sql` |
-| Kafka + Zookeeper | 15-20s | |
-| Debezium | 30-40s | Tự động tạo CDC connector |
-| MinIO | 5s | Tự động tạo bucket `lakehouse` |
-| Spark services | 20-30s | |
-| Airflow | 60-90s | Init database + DAGs |
-| API + Chatbot | 10-15s | Load ML model |
+| Service           | Thời gian | Ghi chú                          |
+| ----------------- | --------- | -------------------------------- |
+| PostgreSQL        | 5-10s     | Tự động chạy `init_postgres.sql` |
+| Kafka + Zookeeper | 15-20s    |                                  |
+| Debezium          | 30-40s    | Tự động tạo CDC connector        |
+| MinIO             | 5s        | Tự động tạo bucket `lakehouse`   |
+| Spark services    | 20-30s    |                                  |
+| Airflow           | 60-90s    | Init database + DAGs             |
+| API + Chatbot     | 10-15s    | Load ML model                    |
 
 **Tổng thời gian**: 3-5 phút cho toàn bộ hệ thống.
 
@@ -247,6 +255,7 @@ docker-compose ps
 ```
 
 **Expected output:**
+
 ```
 NAME                        STATE       PORTS
 postgres                    Up          0.0.0.0:5432->5432/tcp
@@ -264,17 +273,20 @@ mlflow                      Up          0.0.0.0:5001->5000/tcp
 ### Health checks
 
 **PostgreSQL database schema:**
+
 ```bash
 docker exec postgres psql -U postgres -d frauddb -c "\dt"
 ```
 
 Expected tables:
+
 - `transactions` (Main OLTP table)
 - `fraud_predictions` (ML prediction results)
 - `producer_checkpoint` (Streaming offset tracking)
 - `chat_history` (Chatbot conversation history)
 
 **Kafka topics:**
+
 ```bash
 docker exec kafka kafka-topics.sh --bootstrap-server localhost:9092 --list
 ```
@@ -282,6 +294,7 @@ docker exec kafka kafka-topics.sh --bootstrap-server localhost:9092 --list
 Expected: `postgres.public.transactions` (CDC topic)
 
 **Debezium connector:**
+
 ```bash
 curl http://localhost:8083/connectors/postgres-connector/status
 ```
@@ -289,6 +302,7 @@ curl http://localhost:8083/connectors/postgres-connector/status
 Expected: `"state": "RUNNING"`
 
 **API health:**
+
 ```bash
 curl http://localhost:8000/health
 ```
@@ -296,6 +310,7 @@ curl http://localhost:8000/health
 Expected: `{"status": "ok", "model_loaded": true}`
 
 **MinIO buckets:**
+
 ```bash
 docker exec minio mc ls minio/lakehouse/
 ```
@@ -317,6 +332,7 @@ docker exec postgres psql -U postgres -d frauddb -c "\COPY transactions(trans_da
 ```
 
 **Lưu ý:**
+
 - Transactions được INSERT trực tiếp vào PostgreSQL
 - Debezium CDC sẽ tự động capture và gửi vào Kafka
 - Spark streaming sẽ ghi vào Bronze layer
@@ -331,16 +347,19 @@ docker-compose up -d data-producer
 ```
 
 **Producer configuration:**
+
 - File: `services/data-producer/producer.py`
 - Tốc độ mặc định: 10 transactions/giây
 - Checkpoint: Tự động lưu offset, có thể resume
 
 **Monitor producer:**
+
 ```bash
 docker logs data-producer --tail 50 -f
 ```
 
 **Dừng producer:**
+
 ```bash
 docker-compose stop data-producer
 ```
@@ -378,11 +397,13 @@ docker exec airflow-scheduler airflow dags list-runs -d model_retraining_taskflo
 Airflow DAG `model_retraining_taskflow` tự động chạy **hàng ngày vào 2h sáng**.
 
 **Schedule:**
+
 ```python
 schedule_interval="0 2 * * *"  # Cron: 2:00 AM daily
 ```
 
 **Không cần làm gì**, model sẽ tự động:
+
 1. Extract features từ Silver layer
 2. Train RandomForest + LogisticRegression
 3. Evaluate metrics (Accuracy, AUC, Precision, Recall)
@@ -418,6 +439,7 @@ Send Slack Alert (ALL risk levels: LOW/MEDIUM/HIGH)
 ### Cấu hình Slack Webhook
 
 **1. Tạo Slack Incoming Webhook:**
+
 - Truy cập: https://api.slack.com/apps
 - Chọn app (hoặc tạo mới)
 - "Incoming Webhooks" → "Add New Webhook to Workspace"
@@ -425,11 +447,13 @@ Send Slack Alert (ALL risk levels: LOW/MEDIUM/HIGH)
 - Copy Webhook URL
 
 **2. Cập nhật .env:**
+
 ```bash
 SLACK_WEBHOOK_URL=https://hooks.slack.com/services/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
 ```
 
 **3. Rebuild service:**
+
 ```bash
 docker-compose up -d --build spark-realtime-prediction
 ```
@@ -437,11 +461,13 @@ docker-compose up -d --build spark-realtime-prediction
 ### Test Real-time Flow
 
 **Chèn transaction thủ công để test:**
+
 ```bash
 docker exec postgres psql -U postgres -d frauddb -c "INSERT INTO transactions (trans_date_trans_time, cc_num, merchant, category, amt, first, last, gender, street, city, state, zip, lat, long, city_pop, job, dob, trans_num, unix_time, merch_lat, merch_long, is_fraud) VALUES (NOW(), 8888888888888888, 'REALTIME_TEST', 'gas_transport', 8888.88, 'Test', 'User', 'F', '999 Test St', 'TestCity', 'NY', 10001, 40.71, -74.00, 500000, 'Tester', '1990-01-01', 'TEST_' || EXTRACT(epoch FROM NOW())::bigint, EXTRACT(epoch FROM NOW())::int, 40.72, -74.01, 1) RETURNING trans_num, amt, is_fraud;"
 ```
 
 **Expected:**
+
 1. Debezium capture change → Kafka
 2. Spark reads CDC event
 3. API predicts fraud
@@ -449,11 +475,13 @@ docker exec postgres psql -U postgres -d frauddb -c "INSERT INTO transactions (t
 5. Slack alert sent (nếu có webhook)
 
 **Check logs:**
+
 ```bash
 docker logs spark-realtime-prediction --tail 100 -f
 ```
 
 Expected output:
+
 ```
 INFO - 💾 Saved prediction to DB: <prediction_id>
 INFO - ✅ Slack alert sent: <trans_num> (HIGH)
@@ -466,33 +494,36 @@ INFO - 🚨 ALERT sent for <trans_num> (HIGH risk)
 
 ### Tất cả các URLs và credentials
 
-| Service | URL | Credentials | Mô tả |
-|---------|-----|-------------|-------|
-| **Chatbot** | http://localhost:8501 | - | Streamlit AI Chatbot (tiếng Việt) |
-| **Airflow** | http://localhost:8081 | admin / admin | Workflow orchestration |
-| **MLflow** | http://localhost:5001 | - | ML experiment tracking |
-| **FastAPI** | http://localhost:8000/docs | - | Swagger API documentation |
-| **MinIO** | http://localhost:9001 | minioadmin / minioadmin | Object storage console |
-| **Trino** | http://localhost:8085 | - | SQL query engine |
-| **Kafka UI** | - | - | Not included (optional: AKHQ) |
-| **Metabase** | http://localhost:3000 | - | BI Dashboard (if configured) |
-| **PostgreSQL** | localhost:5432 | postgres / postgres123 | Direct DB access (psql, DBeaver) |
+| Service        | URL                        | Credentials             | Mô tả                             |
+| -------------- | -------------------------- | ----------------------- | --------------------------------- |
+| **Chatbot**    | http://localhost:8501      | -                       | Streamlit AI Chatbot (tiếng Việt) |
+| **Airflow**    | http://localhost:8081      | admin / admin           | Workflow orchestration            |
+| **MLflow**     | http://localhost:5001      | -                       | ML experiment tracking            |
+| **FastAPI**    | http://localhost:8000/docs | -                       | Swagger API documentation         |
+| **MinIO**      | http://localhost:9001      | minioadmin / minioadmin | Object storage console            |
+| **Trino**      | http://localhost:8085      | -                       | SQL query engine                  |
+| **Kafka UI**   | -                          | -                       | Not included (optional: AKHQ)     |
+| **Metabase**   | http://localhost:3000      | -                       | BI Dashboard (if configured)      |
+| **PostgreSQL** | localhost:5432             | postgres / postgres123  | Direct DB access (psql, DBeaver)  |
 
 ### Chatbot Features
 
 **Truy cập**: http://localhost:8501
 
 **Sidebar kiểm tra:**
+
 - ✅ Gemini API Status
 - ✅ ML Model Info (version, accuracy, AUC)
 - ✅ Database Connection
 
 **3 loại câu hỏi:**
+
 1. **SQL Analytics**: "Top 5 bang có fraud rate cao nhất?"
 2. **Fraud Prediction**: "Dự đoán $850 lúc 2h sáng, 150km"
 3. **General Knowledge**: "Lịch sử dự đoán của tôi?"
 
 **Công cụ bổ sung:**
+
 - Manual Prediction Form
 - CSV Batch Upload
 
@@ -501,10 +532,12 @@ INFO - 🚨 ALERT sent for <trans_num> (HIGH risk)
 **Truy cập**: http://localhost:8081 (admin/admin)
 
 **2 DAGs chính:**
+
 1. **lakehouse_pipeline_taskflow**: ETL Bronze → Silver → Gold (Mỗi 5 phút)
 2. **model_retraining_taskflow**: ML training (Hàng ngày 2h sáng)
 
 **Trigger manual:**
+
 ```bash
 docker exec airflow-scheduler airflow dags trigger lakehouse_pipeline_taskflow
 docker exec airflow-scheduler airflow dags trigger model_retraining_taskflow
@@ -515,12 +548,14 @@ docker exec airflow-scheduler airflow dags trigger model_retraining_taskflow
 **Truy cập**: http://localhost:5001
 
 **Xem:**
+
 - Experiments: Model training runs
 - Models: Registered models với version history
 - Metrics: Accuracy, AUC, Precision, Recall
 - Artifacts: Model files, confusion matrix plots
 
 **Model stages:**
+
 - `None`: Newly trained
 - `Staging`: Testing
 - `Production`: Active (FastAPI sử dụng)
@@ -572,16 +607,19 @@ docker exec trino trino --catalog delta --schema default --execute "SELECT state
 ### 4. Test API Endpoints
 
 **Health check:**
+
 ```bash
 curl http://localhost:8000/health
 ```
 
 **Model info:**
+
 ```bash
 curl http://localhost:8000/model/info
 ```
 
 **Predict single transaction:**
+
 ```bash
 curl -X POST http://localhost:8000/predict/raw \
   -H "Content-Type: application/json" \
@@ -601,6 +639,7 @@ curl -X POST http://localhost:8000/predict/raw \
 **Truy cập**: http://localhost:8501
 
 **Test queries:**
+
 ```
 1. "Top 5 bang có tỷ lệ gian lận cao nhất?"
 2. "Dự đoán giao dịch $850 lúc 2h sáng cách nhà 150km"
@@ -608,6 +647,7 @@ curl -X POST http://localhost:8000/predict/raw \
 ```
 
 **Expected:**
+
 - Câu 1: Trả về bảng SQL results
 - Câu 2: Trả về prediction với risk level + explanation
 - Câu 3: Trả về model metrics từ MLflow
@@ -619,6 +659,7 @@ curl -X POST http://localhost:8000/predict/raw \
 ### 1. Services không khởi động
 
 **Lỗi: "port already allocated"**
+
 ```bash
 # Kiểm tra port đang sử dụng
 netstat -ano | findstr :8501  # Windows
@@ -628,12 +669,14 @@ lsof -i :8501                 # Linux/Mac
 ```
 
 **Lỗi: "insufficient memory"**
+
 ```bash
 # Tăng RAM cho Docker Desktop
 # Settings → Resources → Memory → Increase to 8GB+
 ```
 
 **Lỗi: "no space left on device"**
+
 ```bash
 # Dọn dẹp Docker
 docker system prune -a --volumes
@@ -642,6 +685,7 @@ docker system prune -a --volumes
 ### 2. PostgreSQL không tạo tables
 
 **Kiểm tra init script:**
+
 ```bash
 docker logs postgres | grep "init_postgres.sql"
 ```
@@ -649,6 +693,7 @@ docker logs postgres | grep "init_postgres.sql"
 **Expected**: "CREATE TABLE transactions", "CREATE TABLE fraud_predictions"
 
 **Nếu không thấy:**
+
 ```bash
 # Xóa volume và restart
 docker-compose down -v
@@ -658,11 +703,13 @@ docker-compose up -d postgres
 ### 3. Debezium không tạo CDC connector
 
 **Kiểm tra connector:**
+
 ```bash
 curl http://localhost:8083/connectors
 ```
 
 **Nếu rỗng:**
+
 ```bash
 # Tạo connector thủ công
 docker exec -it debezium-connect curl -X POST -H "Content-Type: application/json" --data @/config/connector-config.json http://localhost:8083/connectors
@@ -671,6 +718,7 @@ docker exec -it debezium-connect curl -X POST -H "Content-Type: application/json
 ### 4. Spark jobs failed
 
 **Kiểm tra logs:**
+
 ```bash
 docker logs spark-streaming --tail 100
 docker logs spark-silver --tail 100
@@ -678,6 +726,7 @@ docker logs spark-gold --tail 100
 ```
 
 **Lỗi thường gặp:**
+
 - "Connection refused to MinIO" → Kiểm tra MinIO running
 - "Table not found" → Chạy Bronze job trước
 - "Out of memory" → Tăng RAM cho Docker
@@ -685,6 +734,7 @@ docker logs spark-gold --tail 100
 ### 5. ML Model không load
 
 **Lỗi: "No model found in Production stage"**
+
 ```bash
 # Trigger model training
 docker exec airflow-scheduler airflow dags trigger model_retraining_taskflow
@@ -694,6 +744,7 @@ curl http://localhost:5001/api/2.0/mlflow/registered-models/get?name=fraud_detec
 ```
 
 **Nếu model tồn tại nhưng không load:**
+
 ```bash
 # Restart API
 docker-compose restart fraud-detection-api
@@ -703,14 +754,17 @@ docker logs fraud-detection-api
 ### 6. Chatbot không kết nối Gemini
 
 **Lỗi: "Invalid API key"**
+
 - Kiểm tra `GEMINI_API_KEY` trong `.env`
 - Lấy key mới tại: https://aistudio.google.com/app/apikey
 
 **Lỗi: "Connection timeout"**
+
 - Kiểm tra network/firewall
 - Test: `curl https://generativelanguage.googleapis.com/`
 
 **Rebuild chatbot:**
+
 ```bash
 docker-compose up -d --build fraud-chatbot
 ```
@@ -720,11 +774,13 @@ docker-compose up -d --build fraud-chatbot
 **Nguyên nhân**: Webhook URL không hợp lệ hoặc đã bị xóa
 
 **Giải quyết:**
+
 1. Tạo webhook mới: https://api.slack.com/apps → Incoming Webhooks
 2. Cập nhật `SLACK_WEBHOOK_URL` trong `.env`
 3. Rebuild: `docker-compose up -d --build spark-realtime-prediction`
 
 **Test webhook:**
+
 ```bash
 curl -X POST $SLACK_WEBHOOK_URL \
   -H "Content-Type: application/json" \
@@ -738,12 +794,14 @@ curl -X POST $SLACK_WEBHOOK_URL \
 **Nguyên nhân**: PostgreSQL mặc định dùng UTC
 
 **Giải quyết Option 1** (Đổi timezone PostgreSQL):
+
 ```bash
 docker exec postgres psql -U postgres -c "ALTER DATABASE frauddb SET timezone TO 'Asia/Ho_Chi_Minh';"
 docker-compose restart postgres
 ```
 
 **Giải quyết Option 2** (Đổi trong code):
+
 ```python
 # Trong spark/app/realtime_prediction_job.py
 # Thay NOW() bằng:
@@ -753,6 +811,7 @@ prediction_time = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh'
 ### 9. Airflow DAGs không chạy
 
 **Lỗi: "DAG not found"**
+
 ```bash
 # List DAGs
 docker exec airflow-scheduler airflow dags list
@@ -762,12 +821,14 @@ docker-compose restart airflow-scheduler airflow-webserver
 ```
 
 **Lỗi: "Executor timeout"**
+
 - Tăng RAM cho Docker
 - Giảm số task concurrent trong `airflow.cfg`
 
 ### 10. Trino query timeout
 
 **Lỗi: "Query exceeded maximum time"**
+
 ```bash
 # Tăng timeout trong trino config
 # File: config/trino/config.properties
