@@ -1,6 +1,11 @@
 """
 LangChain Agent cho Fraud Detection
 Sử dụng ReAct pattern để tự động chọn tools
+
+REFACTORED:
+- Prompt được load từ config/prompts.yaml
+- Schema được dynamic load từ Trino
+- Business rules tách riêng ra config
 """
 
 from langchain.agents import AgentExecutor, create_react_agent
@@ -9,6 +14,7 @@ from langchain.prompts import PromptTemplate
 from typing import Dict
 import streamlit as st
 import os
+import logging
 
 # Import tools
 import sys
@@ -16,10 +22,25 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from core.tools import create_database_tool, create_prediction_tool, create_model_info_tool
 from core.config import GEMINI_MODEL_NAME, GEMINI_MAX_RETRIES, GEMINI_REQUEST_TIMEOUT
+from utils.config_loader import get_config_loader
+from utils.schema_loader import get_schema_loader
+
+logger = logging.getLogger(__name__)
 
 @st.cache_resource
 def get_fraud_detection_agent() -> AgentExecutor:
-    """Tạo ReAct Agent với 2 tools: QueryDatabase và PredictFraud"""
+    """
+    Tạo ReAct Agent với dynamic schema và config-based prompts
+    
+    IMPROVEMENTS:
+    - Prompt load từ config/prompts.yaml
+    - Schema tự động load từ Trino
+    - Business rules từ config/business_rules.yaml
+    """
+    
+    # Load config và schema
+    config_loader = get_config_loader()
+    schema_loader = get_schema_loader()
     
     # LLM - Gemini với retry limit
     llm = ChatGoogleGenerativeAI(
@@ -30,84 +51,36 @@ def get_fraud_detection_agent() -> AgentExecutor:
         request_timeout=GEMINI_REQUEST_TIMEOUT
     )
     
-    # Tools (pass LLM to prediction tool for AI insights)
+    # Tools
     tools = [
         create_database_tool(),
         create_prediction_tool(llm),
         create_model_info_tool()
     ]
     
-    # Prompt template (ReAct format) - TIẾNG VIỆT
-    prompt = PromptTemplate.from_template("""
-Bạn là chuyên gia phân tích gian lận tài chính với 3 công cụ mạnh mẽ:
-
-1. **QueryDatabase**: Truy vấn Delta Lake để phân tích dữ liệu lịch sử
-2. **PredictFraud**: Dự đoán giao dịch mới có gian lận không
-3. **GetModelInfo**: Lấy thông tin về ML model đang sử dụng
-
-TOOLS:
-{tools}
-
-TOOL NAMES: {tool_names}
-
----
-
-**Hướng dẫn sử dụng:**
-
-- Nếu câu hỏi về **dữ liệu lịch sử** (top X, fraud rate, trends...) → Dùng QueryDatabase
-- Nếu câu hỏi về **giao dịch cụ thể** (dự đoán, kiểm tra...) → Dùng PredictFraud
-- Nếu câu hỏi về **thông tin model** (accuracy, version, metrics...) → Dùng GetModelInfo
-- Câu hỏi **phức hợp** → Dùng nhiều tools theo thứ tự logic
-- Câu hỏi **tổng quát** về fraud (định nghĩa, pattern...) → Trả lời trực tiếp không cần tool
-
-**Ví dụ câu phức hợp:**
-"Check giao dịch $500 và so sánh với fraud rate trung bình của merchant đó"
-→ Bước 1: PredictFraud(amt=500.0)
-→ Bước 2: QueryDatabase("SELECT AVG(fraud_rate) FROM merchant_analysis WHERE merchant = '...'")
-
-**Parsing user input cho PredictFraud:**
-- "Dự đoán giao dịch $850 lúc 2h sáng" → PredictFraud(amt=850, hour=2)
-- "Check giao dịch $1200 xa 150km" → PredictFraud(amt=1200, distance_km=150)
-- **QUAN TRỌNG:** amt phải là số (int hoặc float), KHÔNG phải string "$850"
-- Ví dụ ĐÚNG: PredictFraud(amt=850, hour=2)
-- Ví dụ SAI: PredictFraud(amt="$850", hour="2h")
-
-**Lưu ý quan trọng:**
-- SQL queries phải hợp lệ Trino syntax trên catalog **delta.gold**
-- Ưu tiên dùng bảng pre-aggregated (state_summary, merchant_analysis) để nhanh
-- **Bảng có sẵn trong delta.gold:**
-  * merchant_analysis: merchant, merchant_category, total_transactions, fraud_transactions, avg_amount, fraud_rate
-  * state_summary: state, total_transactions, fraud_transactions, fraud_rate
-  * hourly_summary, daily_summary: fraud_rate, avg_amount theo thời gian
-  * fact_transactions: Bảng giao dịch chi tiết (chậm, ít dùng)
-- **LƯU Ý:** Bảng fraud_predictions KHÔNG có trong Trino (chỉ có trong PostgreSQL), không thể query được
-- Nếu query lỗi COLUMN_NOT_FOUND → Dùng DESCRIBE <table> để xem schema chính xác
-- **FINAL ANSWER:**
-  * Với PredictFraud: TRẢ NGUYÊN VĂN output từ tool (giữ nguyên format markdown với emoji, tables)
-  * Với QueryDatabase: Tóm tắt ngắn gọn kèm insight
-  * KHÔNG viết lại hay tóm tắt output của PredictFraud
-- Format kết quả bằng TIẾNG VIỆT
-- Với số tiền, dùng format: $XXX,XXX.XX
-- Với phần trăm, dùng: XX.X%
-
----
-
-**Format trả lời (ReAct):**
-
-Thought: [Tôi cần làm gì?]
-Action: [Tên tool]
-Action Input: [JSON input hoặc tham số]
-Observation: [Kết quả tool]
-... (lặp lại nếu cần nhiều bước)
-Thought: [Tôi đã có đủ thông tin]
-Final Answer: [Câu trả lời đầy đủ bằng tiếng Việt, format đẹp]
-
----
-
-**Câu hỏi:** {input}
-
-{agent_scratchpad}
-    """)
+    # Get dynamic schema from Trino
+    try:
+        logger.info("Loading dynamic schema from Trino...")
+        schema_text = schema_loader.format_schema_for_prompt()
+        logger.info(f"Schema loaded: {len(schema_text)} characters")
+    except Exception as e:
+        logger.warning(f"Failed to load dynamic schema: {e}, using fallback")
+        schema_text = "⚠️ Schema loading failed - using cached knowledge"
+    
+    # Get prompt template from config
+    system_prompt_template = config_loader.get_system_prompt()
+    
+    # Inject dynamic schema vào prompt
+    system_prompt = system_prompt_template.format(
+        tools="{tools}",  # Placeholder for LangChain
+        tool_names="{tool_names}",  # Placeholder for LangChain
+        database_schema=schema_text,
+        input="{input}",  # Placeholder for LangChain
+        agent_scratchpad="{agent_scratchpad}"  # Placeholder for LangChain
+    )
+    
+    # Create prompt template
+    prompt = PromptTemplate.from_template(system_prompt)
     
     # Create agent
     agent = create_react_agent(
@@ -127,6 +100,7 @@ Final Answer: [Câu trả lời đầy đủ bằng tiếng Việt, format đẹ
         return_intermediate_steps=True
     )
     
+    logger.info("✅ Agent initialized with dynamic schema and config-based prompts")
     return executor
 
 def run_agent(question: str) -> Dict:

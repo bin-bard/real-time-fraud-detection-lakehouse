@@ -79,3 +79,64 @@ def get_prediction_history(limit: int = 10) -> Dict:
         return {"success": True, "data": response.json()}
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+def predict_fraud_raw(
+    amt: float,
+    hour: int = None,
+    distance_km: float = None,
+    merchant: str = None,
+    category: str = None,
+    age: int = None
+) -> Dict:
+    """
+    **NEW: Dự đoán fraud với raw data (KHUYẾN NGHỊ)**
+    
+    Chatbot chỉ cần gửi dữ liệu thô, API tự tính toán features.
+    Tách biệt logic feature engineering khỏi chatbot.
+    
+    Args:
+        amt: Số tiền giao dịch (bắt buộc)
+        hour: Giờ giao dịch (0-23)
+        distance_km: Khoảng cách từ nhà (km)
+        merchant: Tên merchant
+        category: Loại giao dịch
+        age: Tuổi khách hàng
+    
+    Returns:
+        {
+            "success": True/False,
+            "data": {prediction result} or None,
+            "error": error message if failed
+        }
+    """
+    try:
+        # Build payload with only provided fields
+        payload = {"amt": amt}
+        
+        if hour is not None:
+            payload["hour"] = hour
+        if distance_km is not None:
+            payload["distance_km"] = distance_km
+        if merchant:
+            payload["merchant"] = merchant
+        if category:
+            payload["category"] = category
+        if age is not None:
+            payload["age"] = age
+        
+        response = requests.post(
+            f"{FRAUD_API_URL}/predict/raw",
+            json=payload,
+            timeout=15
+        )
+        response.raise_for_status()
+        return {"success": True, "data": response.json()}
+        
+    except requests.exceptions.Timeout:
+        return {"success": False, "error": "API timeout (>15s)"}
+    except requests.exceptions.ConnectionError:
+        return {"success": False, "error": "Không thể kết nối tới Fraud Detection API"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+

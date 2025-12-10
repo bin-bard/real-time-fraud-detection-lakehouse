@@ -509,6 +509,8 @@ services:
     volumes:
       # NEW: Mount src/ thay vì app/
       - ./services/fraud-chatbot/src:/app/src
+      # CRITICAL: Mount config files
+      - ./services/fraud-chatbot/config:/app/config
     environment:
       # Gemini API Key (Lấy từ https://aistudio.google.com/app/apikey)
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}

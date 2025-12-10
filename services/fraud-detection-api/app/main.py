@@ -10,6 +10,9 @@ from mlflow.tracking import MlflowClient
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
+# Import feature engineering
+from app.feature_engineering import engineer_features, get_feature_values_for_model, explain_features
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -66,6 +69,26 @@ class TransactionFeatures(BaseModel):
     trans_num: Optional[str] = None
     merchant: Optional[str] = None
     category: Optional[str] = None
+
+
+# NEW: Raw transaction input (chatbot chỉ cần gửi raw data)
+class RawTransactionInput(BaseModel):
+    """
+    Raw transaction data from chatbot/user
+    API sẽ tự động tính toán các features cần thiết
+    """
+    # Required
+    amt: float  # Transaction amount
+    
+    # Optional (có defaults)
+    hour: Optional[int] = None  # Hour of day (0-23)
+    distance_km: Optional[float] = None  # Distance from home (km)
+    merchant: Optional[str] = None  # Merchant name
+    category: Optional[str] = None  # Transaction category
+    age: Optional[int] = None  # Customer age
+    gender: Optional[str] = None  # 'M' or 'F'
+    day_of_week: Optional[int] = None  # 0=Monday, 6=Sunday
+    trans_num: Optional[str] = None  # Transaction ID (auto-generated if not provided)
 
 def get_postgres_conn():
     """Get PostgreSQL connection"""
@@ -634,6 +657,81 @@ def model_info_endpoint():
             "status": "fallback_mode",
             "note": "MLflow model not loaded, using rule-based fallback"
         }
+
+@app.post("/predict/raw")
+async def predict_fraud_from_raw(raw_data: RawTransactionInput):
+    """
+    **NEW ENDPOINT: Predict fraud từ raw transaction data**
+    
+    Chatbot chỉ cần gửi dữ liệu thô (amt, hour, distance_km...),
+    API tự động tính toán tất cả features cần thiết.
+    
+    Lợi ích:
+    - Chatbot không cần biết về feature engineering
+    - Có thể thay đổi model/features mà không sửa chatbot
+    - Logic tính toán tập trung ở một nơi
+    """
+    try:
+        # 1. Feature engineering (API tự tính toán)
+        engineered = engineer_features(
+            amt=raw_data.amt,
+            hour=raw_data.hour,
+            distance_km=raw_data.distance_km,
+            merchant=raw_data.merchant,
+            category=raw_data.category,
+            age=raw_data.age,
+            gender=raw_data.gender,
+            day_of_week=raw_data.day_of_week,
+            trans_num=raw_data.trans_num
+        )
+        
+        logger.info(f"🔧 Engineered features for {engineered['trans_num']}: "
+                   f"amt_bin={engineered['amount_bin']}, "
+                   f"is_high_amt={engineered['is_high_amount']}, "
+                   f"is_late_night={engineered['is_late_night']}")
+        
+        # 2. Convert to TransactionFeatures for prediction
+        features = TransactionFeatures(
+            amt=engineered["amt"],
+            log_amount=engineered["log_amount"],
+            amount_bin=engineered["amount_bin"],
+            is_zero_amount=engineered["is_zero_amount"],
+            is_high_amount=engineered["is_high_amount"],
+            distance_km=engineered["distance_km"],
+            is_distant_transaction=engineered["is_distant_transaction"],
+            age=engineered["age"],
+            gender_encoded=engineered["gender_encoded"],
+            hour=engineered["hour"],
+            day_of_week=engineered["day_of_week"],
+            is_weekend=engineered["is_weekend"],
+            is_late_night=engineered["is_late_night"],
+            hour_sin=engineered["hour_sin"],
+            hour_cos=engineered["hour_cos"],
+            trans_num=engineered["trans_num"],
+            merchant=engineered["merchant"],
+            category=engineered["category"]
+        )
+        
+        # 3. Use existing prediction logic
+        result = await predict_fraud(features)
+        
+        # 4. Add feature explanation
+        feature_explanation = explain_features(engineered)
+        
+        return {
+            **result.dict(),
+            "feature_explanation": feature_explanation,
+            "raw_input": {
+                "amt": raw_data.amt,
+                "hour": raw_data.hour,
+                "distance_km": raw_data.distance_km
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Raw prediction error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Prediction error: {str(e)}")
+
 
 @app.post("/model/reload")
 def reload_model():

@@ -21,12 +21,16 @@ ENV PATH="${JAVA_HOME}/bin:${PATH}"
 
 WORKDIR /app
 
-# Copy application code
-COPY ./app /app/app
+# CRITICAL: Copy requirements FIRST (before app code) for better layer caching
+# Chỉ khi requirements.txt thay đổi mới rebuild dependencies layer
 COPY requirements.txt /app/requirements.txt
 
-# Install Python dependencies
+# Install Python dependencies (layer này sẽ được cache nếu requirements.txt không đổi)
 RUN pip install --no-cache-dir -r /app/requirements.txt
+
+# Copy application code AFTER installing dependencies
+# Khi code thay đổi, chỉ layer này rebuild, không phải dependencies
+COPY ./app /app/app
 
 # Expose port
 EXPOSE 8000

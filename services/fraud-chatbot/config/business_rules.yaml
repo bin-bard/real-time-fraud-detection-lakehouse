@@ -1,0 +1,85 @@
+# ============================================================
+# BUSINESS RULES - Fraud Detection System
+# ============================================================
+# File này chứa các quy tắc nghiệp vụ để phân loại rủi ro gian lận
+# Business Analyst có thể điều chỉnh ngưỡng mà không cần sửa code
+
+# Risk thresholds (ngưỡng xác suất gian lận)
+risk_thresholds:
+  high_risk: 0.7 # >= 70% là HIGH RISK
+  medium_risk: 0.3 # 30-70% là MEDIUM RISK
+  low_risk: 0.0 # < 30% là LOW RISK
+
+# Amount thresholds (ngưỡng số tiền)
+amount_thresholds:
+  high_amount: 500.0 # > $500 là giao dịch lớn
+  very_high_amount: 1000.0 # > $1000 là giao dịch rất lớn
+  suspicious_amount: 5000.0 # > $5000 cần review đặc biệt
+
+# Time-based rules (quy tắc theo thời gian)
+time_rules:
+  late_night_start: 23 # 23h - 6h là late night (rủi ro cao)
+  late_night_end: 6
+  business_hours_start: 9 # 9h - 17h là business hours (rủi ro thấp)
+  business_hours_end: 17
+
+# Distance rules (quy tắc khoảng cách)
+distance_rules:
+  distant_threshold: 50.0 # > 50km là distant transaction (rủi ro cao)
+  very_distant_threshold: 100.0 # > 100km cần review
+
+# Response formatting
+response_format:
+  # Emoji cho risk levels
+  risk_emojis:
+    HIGH: "🚨"
+    MEDIUM: "⚠️"
+    LOW: "✅"
+
+  # Messages cho từng risk level
+  risk_messages:
+    HIGH: "CẢNH BÁO: Giao dịch nghi ngờ gian lận cao!"
+    MEDIUM: "CHÚ Ý: Giao dịch có dấu hiệu bất thường."
+    LOW: "Giao dịch an toàn."
+
+  # Format output
+  show_confidence: true
+  show_factors: true
+  show_recommendation: true
+  max_rows_display: 20 # Giới hạn số dòng khi hiển thị bảng
+
+# Recommendation messages
+recommendations:
+  HIGH:
+    - "Khuyến nghị: Từ chối hoặc yêu cầu xác thực bổ sung"
+    - "Liên hệ khách hàng để xác nhận giao dịch"
+    - "Review lịch sử giao dịch của khách hàng"
+
+  MEDIUM:
+    - "Khuyến nghị: Xem xét thêm các yếu tố khác"
+    - "Có thể yêu cầu xác thực 2FA"
+    - "Theo dõi các giao dịch tiếp theo"
+
+  LOW:
+    - "Giao dịch có thể được chấp nhận"
+    - "Không cần hành động đặc biệt"
+
+# Feature importance weights (for explanation)
+feature_weights:
+  amt: 0.25
+  distance_km: 0.20
+  hour: 0.15
+  merchant_risk: 0.20
+  customer_history: 0.20
+
+# Alerts configuration
+alerts:
+  enable_high_risk_alert: true
+  enable_amount_alert: true
+  alert_threshold_amount: 5000.0 # Alert nếu giao dịch > $5000
+
+# Model version policy
+model_policy:
+  require_production_model: true # Chỉ dùng model ở stage Production
+  min_accuracy_threshold: 0.85 # Model phải có accuracy >= 85%
+  model_refresh_interval: 86400 # Check model mới mỗi 24h (seconds)

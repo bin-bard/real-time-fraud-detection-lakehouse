@@ -1,14 +1,14 @@
 """
 LangChain Tools cho Fraud Detection Agent
 - QueryDatabaseTool: Query Trino Delta Lake
-- PredictFraudTool: Dự đoán fraud bằng ML model
+- PredictFraudTool: Dự đoán fraud bằng ML model (chỉ gửi raw data)
+- GetModelInfoTool: Lấy thông tin ML model
 """
 
 from langchain.tools import Tool, StructuredTool
 from langchain.pydantic_v1 import BaseModel, Field
 from typing import Optional, Union, Dict, Any
 import pandas as pd
-import math
 import json
 
 # Import từ modules khác
@@ -17,7 +17,7 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from database.trino import execute_sql_query
-from utils.api_client import predict_fraud_api, get_model_info
+from utils.api_client import predict_fraud_raw, get_model_info  # Changed: use predict_fraud_raw
 
 class QueryDatabaseInput(BaseModel):
     """Input cho QueryDatabaseTool"""
@@ -88,38 +88,11 @@ Ví dụ queries:
         """
     )
 
-def get_ai_insight(prediction_result: dict, llm=None) -> str:
-    """Generate AI insight using Gemini if available"""
-    if not llm:
-        return ""  # No LLM, skip insights
-    
-    try:
-        is_fraud = prediction_result.get('is_fraud')
-        probability = prediction_result.get('probability', 0)
-        amt = prediction_result.get('amt', 0)
-        hour = prediction_result.get('hour', 12)
-        distance = prediction_result.get('distance', 0)
-        
-        prompt = f"""
-Phân tích giao dịch tài chính:
-- Kết quả model: {'GIAN LẬN' if is_fraud else 'AN TOÀN'}
-- Xác suất gian lận: {probability:.1%}
-- Số tiền: ${amt}
-- Thời gian: {hour}h
-- Khoảng cách: {distance}km
-
-Viết 2-3 dòng insight ngắn gọn (tiếng Việt) về giao dịch này.
-"""
-        
-        from langchain.schema import HumanMessage
-        response = llm.invoke([HumanMessage(content=prompt)])
-        return f"\n\n💡 **AI Insight:**\n{response.content.strip()}"
-        
-    except Exception as e:
-        return ""  # Fail silently
-
 def create_prediction_tool(llm=None):
-    """Công cụ dự đoán gian lận với AI insights"""
+    """
+    Công cụ dự đoán gian lận - REFACTORED
+    Chỉ gửi raw data cho API, không tự tính features
+    """
     
     def predict_fraud(
         amt: Union[float, str] = None,
@@ -166,30 +139,15 @@ def create_prediction_tool(llm=None):
         if amt <= 0:
             return "❌ Lỗi: Số tiền giao dịch phải > 0"
         
-        # Build features (simplified version)
-        features = {
-            "amt": amt,
-            "log_amount": math.log1p(amt),
-            "is_high_amount": 1 if amt > 500 else 0,
-            "is_zero_amount": 1 if amt == 0 else 0,
-            "amount_bin": min(5, max(1, int(amt / 100) + 1)) if amt > 0 else 0,
-            "distance_km": distance_km or 10.0,
-            "is_distant_transaction": 1 if (distance_km or 0) > 50 else 0,
-            "age": age or 35,
-            "gender_encoded": 0,
-            "hour": hour or 12,
-            "day_of_week": 0,
-            "is_weekend": 0,
-            "is_late_night": 1 if hour and (hour < 6 or hour >= 23) else 0,
-            "hour_sin": math.sin(2 * math.pi * (hour or 12) / 24),
-            "hour_cos": math.cos(2 * math.pi * (hour or 12) / 24),
-            "merchant": merchant,
-            "category": category,
-            "trans_num": f"CHAT_{pd.Timestamp.now():%Y%m%d%H%M%S}"
-        }
-        
-        # Call API
-        result = predict_fraud_api(features)
+        # === GỌI API VỚI RAW DATA - API TỰ TÍNH FEATURES ===
+        result = predict_fraud_raw(
+            amt=amt,
+            hour=hour,
+            distance_km=distance_km,
+            merchant=merchant,
+            category=category,
+            age=age
+        )
         
         if result["success"]:
             data = result["data"]
@@ -197,30 +155,40 @@ def create_prediction_tool(llm=None):
             probability = data.get('fraud_probability', 0)
             risk = data.get('risk_level', 'UNKNOWN')
             model_ver = data.get('model_version', 'N/A')
+            feature_explanation = data.get('feature_explanation', '')
             
             # Risk emoji
             risk_emoji = {"LOW": "🟢", "MEDIUM": "🟡", "HIGH": "🔴"}.get(risk, "⚪")
             
-            # AI insights (only if using ML model and LLM available)
-            ai_insight = ""
-            if llm and "mlflow" in model_ver.lower():
-                ai_insight = get_ai_insight({
-                    'is_fraud': is_fraud,
-                    'probability': probability,
-                    'amt': amt,
-                    'hour': hour or 12,
-                    'distance': distance_km or 10
-                }, llm)
-            
-            return f"""
+            # Build response
+            response = f"""
 ✅ **Kết quả dự đoán**
 
-Giao dịch ${amt:.2f}:
-- **Fraud:** {'CÓ' if is_fraud == 1 else 'KHÔNG'}
+**Giao dịch ${amt:.2f}:**
+- **Phát hiện gian lận:** {'✋ CÓ' if is_fraud == 1 else '👍 KHÔNG'}
 - **Xác suất:** {probability:.1%}
-- **Risk Level:** {risk_emoji} {risk}
-- **Model:** {model_ver}{ai_insight}
+- **Mức độ rủi ro:** {risk_emoji} {risk}
+- **Model version:** {model_ver}
 """
+            
+            # Add feature explanation if available
+            if feature_explanation:
+                response += f"\n**Đặc điểm nhận diện:**\n{feature_explanation}\n"
+            
+            # Add raw input recap
+            recap = f"\n**Chi tiết giao dịch:**\n- Số tiền: ${amt:.2f}"
+            if hour is not None:
+                recap += f"\n- Thời gian: {hour}h"
+            if distance_km is not None:
+                recap += f"\n- Khoảng cách: {distance_km:.1f}km"
+            if merchant:
+                recap += f"\n- Merchant: {merchant}"
+            if category:
+                recap += f"\n- Category: {category}"
+            if age:
+                recap += f"\n- Tuổi khách hàng: {age} tuổi"
+            
+            return response + recap
         else:
             return f"❌ Lỗi prediction: {result['error']}"
     
@@ -230,6 +198,8 @@ Giao dịch ${amt:.2f}:
         name="PredictFraud",
         description="""
 Công cụ dự đoán giao dịch có gian lận hay không bằng ML model.
+
+**QUAN TRỌNG:** Chỉ cần gửi dữ liệu thô (raw data), API tự tính toán features.
 
 Sử dụng khi cần:
 - Kiểm tra giao dịch mới có rủi ro không
@@ -249,10 +219,12 @@ Output: Kết quả dự đoán với giải thích
 Ví dụ:
 - PredictFraud(amt=850.0, hour=2)
 - PredictFraud(amt=1200.0, distance_km=150.0)
-- PredictFraud(amt=500)
+- PredictFraud(amt=50.0, hour=14, merchant="walmart", age=35)
         """,
+        infer_schema=True,
         handle_tool_error=True
     )
+
 
 def create_model_info_tool():
     """Công cụ lấy thông tin model từ API"""
