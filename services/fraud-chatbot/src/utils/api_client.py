@@ -43,10 +43,13 @@ def predict_fraud_api(transaction_data: dict) -> Dict:
         return {"success": False, "error": str(e)}
 
 def predict_batch_api(transactions: List[dict]) -> Dict:
-    """Gọi batch prediction API"""
+    """
+    Gọi batch prediction API với RAW data
+    API sẽ tự tính features cho từng transaction
+    """
     try:
         response = requests.post(
-            f"{FRAUD_API_URL}/predict/batch",
+            f"{FRAUD_API_URL}/predict/batch/raw",  # Changed: use /raw endpoint
             json=transactions,  # API expects list directly, not wrapped in {"transactions": ...}
             timeout=60
         )

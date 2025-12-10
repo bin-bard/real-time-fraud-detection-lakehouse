@@ -757,8 +757,8 @@ def reload_model():
 @app.post("/predict/batch")
 async def predict_batch(transactions: list[TransactionFeatures]):
     """
-    Batch prediction for multiple transactions
-    Useful for processing accumulated transactions
+    Batch prediction for multiple transactions (WITH COMPUTED FEATURES)
+    Useful for processing accumulated transactions from data pipeline
     """
     try:
         results = []
@@ -784,6 +784,41 @@ async def predict_batch(transactions: list[TransactionFeatures]):
         
     except Exception as e:
         logger.error(f"Batch prediction error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Batch prediction error: {str(e)}")
+
+
+@app.post("/predict/batch/raw")
+async def predict_batch_raw(transactions: list[RawTransactionInput]):
+    """
+    Batch prediction from RAW transaction data
+    API will compute features automatically for each transaction
+    Used by: Chatbot CSV upload, Manual batch processing
+    """
+    try:
+        results = []
+        for raw_trans in transactions:
+            # Convert to dict and call predict_fraud_raw logic
+            pred = await predict_fraud_raw(raw_trans)
+            results.append(pred)
+        
+        # Summary statistics
+        total = len(results)
+        fraud_count = sum(1 for r in results if r.is_fraud_predicted == 1)
+        high_risk = sum(1 for r in results if r.risk_level == "HIGH")
+        
+        return {
+            "predictions": results,
+            "summary": {
+                "total_transactions": total,
+                "fraud_detected": fraud_count,
+                "fraud_rate": round(fraud_count / total * 100, 2) if total > 0 else 0,
+                "high_risk_count": high_risk,
+                "model_version": model_version if model_version else "rule_based_v1"
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Batch prediction error (raw): {str(e)}")
         raise HTTPException(status_code=500, detail=f"Batch prediction error: {str(e)}")
 
 # To run locally for development: uvicorn app.main:app --host 0.0.0.0 --port 8000
