@@ -17,7 +17,8 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from database.trino import execute_sql_query
-from utils.api_client import predict_fraud_raw, get_model_info  # Changed: use predict_fraud_raw
+from utils.api_client import predict_fraud_raw, get_model_info
+from components.prediction_result import get_ai_insight, format_prediction_message
 
 class QueryDatabaseInput(BaseModel):
     """Input cho QueryDatabaseTool"""
@@ -151,32 +152,14 @@ def create_prediction_tool(llm=None):
         
         if result["success"]:
             data = result["data"]
-            is_fraud = data.get('is_fraud_predicted', 0)
-            probability = data.get('fraud_probability', 0)
-            risk = data.get('risk_level', 'UNKNOWN')
-            model_ver = data.get('model_version', 'N/A')
-            feature_explanation = data.get('feature_explanation', '')
             
-            # Risk emoji
-            risk_emoji = {"LOW": "🟢", "MEDIUM": "🟡", "HIGH": "🔴"}.get(risk, "⚪")
+            # === DÙNG COMPONENT CHUNG - GIỐNG MANUAL/BATCH ===
+            ai_insight = get_ai_insight(data)
+            formatted_response = format_prediction_message(data, ai_insight)
             
-            # Build response
-            response = f"""
-✅ **Kết quả dự đoán**
-
-**Giao dịch ${amt:.2f}:**
-- **Phát hiện gian lận:** {'✋ CÓ' if is_fraud == 1 else '👍 KHÔNG'}
-- **Xác suất:** {probability:.1%}
-- **Mức độ rủi ro:** {risk_emoji} {risk}
-- **Model version:** {model_ver}
-"""
-            
-            # Add feature explanation if available
-            if feature_explanation:
-                response += f"\n**Đặc điểm nhận diện:**\n{feature_explanation}\n"
-            
-            # Add raw input recap
-            recap = f"\n**Chi tiết giao dịch:**\n- Số tiền: ${amt:.2f}"
+            # Add raw input recap for chatbot context
+            amt_val = data.get('raw_input', {}).get('amt', amt)
+            recap = f"\n\n**Chi tiết giao dịch đã nhập:**\n- Số tiền: ${amt_val:.2f}"
             if hour is not None:
                 recap += f"\n- Thời gian: {hour}h"
             if distance_km is not None:
@@ -188,7 +171,7 @@ def create_prediction_tool(llm=None):
             if age:
                 recap += f"\n- Tuổi khách hàng: {age} tuổi"
             
-            return response + recap
+            return formatted_response + recap
         else:
             return f"❌ Lỗi prediction: {result['error']}"
     

@@ -16,6 +16,7 @@ sys.path.append(os.path.dirname(__file__))
 from components.sidebar import render_sidebar
 from components.chat_bubble import render_message, render_thinking_process
 from components.forms import ManualPredictionForm
+from components.prediction_result import get_ai_insight, format_prediction_message
 from core.agent import run_agent
 from database.postgres import init_chat_history_table, save_message, load_chat_history
 from utils.formatting import format_currency, format_percentage
@@ -80,21 +81,16 @@ def main():
     if hasattr(st.session_state, 'manual_prediction_result'):
         result = st.session_state.manual_prediction_result
         
-        # Format prediction message
-        fraud_icon = "⚠️" if result.get('is_fraud_predicted') == 1 else "✅"
-        risk_emoji_map = {"LOW": "🟢", "MEDIUM": "🟡", "HIGH": "🔴"}
-        risk_emoji = risk_emoji_map.get(result.get('risk_level', ''), "⚪")
+        # Generate AI insight using component
+        with st.spinner("🤖 Đang phân tích kết quả..."):
+            ai_insight = get_ai_insight(result)
         
-        # Simple summary - details shown in expander
+        # Format message using shared component
+        formatted_content = format_prediction_message(result, ai_insight)
+        
         prediction_msg = {
             "role": "assistant",
-            "content": f"""
-{fraud_icon} **Manual Prediction Result**
-
-**Kết quả:** {'GIAN LẬN' if result.get('is_fraud_predicted') == 1 else 'AN TOÀN'}  
-**Risk Level:** {risk_emoji} {result.get('risk_level', 'UNKNOWN')} ({result.get('fraud_probability', 0):.1%})  
-**Model:** {result.get('model_version', 'N/A')}
-            """,
+            "content": formatted_content,
             "prediction_data": result
         }
         

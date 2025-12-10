@@ -7,14 +7,14 @@ Forms Component
 import streamlit as st
 import pandas as pd
 from typing import Dict, Optional
-import math
 
 # Import từ modules khác
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
-from utils.api_client import predict_fraud_api, predict_batch_api
+from utils.api_client import predict_batch_api, predict_fraud_raw
+from components.prediction_result import get_batch_ai_insight
 
 class ManualPredictionForm:
     """Form nhập thủ công thông tin giao dịch"""
@@ -48,19 +48,15 @@ class ManualPredictionForm:
             submitted = st.form_submit_button("🔮 Dự đoán", use_container_width=True)
             
             if submitted:
-                # Build features
-                features = self._build_features(
+                # Call API with RAW data (không cần tính features)
+                result = predict_fraud_raw(
                     amt=amt,
                     hour=hour,
                     distance_km=distance_km,
                     age=age,
-                    day_of_week=day_of_week,
                     merchant=merchant if merchant else None,
                     category=category if category else None
                 )
-                
-                # Call API
-                result = predict_fraud_api(features)
                 
                 if result["success"]:
                     return result["data"]
@@ -68,61 +64,6 @@ class ManualPredictionForm:
                     st.error(f"❌ Lỗi: {result['error']}")
         
         return None
-    
-    def _build_features(self, amt, hour, distance_km, age, day_of_week, merchant, category):
-        """Build complete transaction features"""
-        
-        # Calculate derived features
-        log_amount = math.log1p(amt)
-        is_high_amount = 1 if amt > 500 else 0
-        is_zero_amount = 1 if amt == 0 else 0
-        
-        # Amount bin (simplified)
-        if amt == 0:
-            amount_bin = 0
-        elif amt <= 50:
-            amount_bin = 1
-        elif amt <= 150:
-            amount_bin = 2
-        elif amt <= 300:
-            amount_bin = 3
-        elif amt <= 500:
-            amount_bin = 4
-        else:
-            amount_bin = 5
-        
-        # Distance features
-        is_distant = 1 if distance_km > 50 else 0
-        
-        # Time features
-        is_weekend = 1 if day_of_week in [5, 6] else 0
-        is_late_night = 1 if hour < 6 or hour >= 23 else 0
-        hour_sin = math.sin(2 * math.pi * hour / 24)
-        hour_cos = math.cos(2 * math.pi * hour / 24)
-        
-        # Gender (default F=0)
-        gender_encoded = 0
-        
-        return {
-            "amt": amt,
-            "log_amount": log_amount,
-            "is_zero_amount": is_zero_amount,
-            "is_high_amount": is_high_amount,
-            "amount_bin": amount_bin,
-            "distance_km": distance_km,
-            "is_distant_transaction": is_distant,
-            "age": age,
-            "gender_encoded": gender_encoded,
-            "hour": hour,
-            "day_of_week": day_of_week,
-            "is_weekend": is_weekend,
-            "is_late_night": is_late_night,
-            "hour_sin": hour_sin,
-            "hour_cos": hour_cos,
-            "merchant": merchant,
-            "category": category,
-            "trans_num": f"MANUAL_{pd.Timestamp.now().strftime('%Y%m%d%H%M%S')}"
-        }
 
 
 class CSVBatchUploader:
@@ -132,7 +73,7 @@ class CSVBatchUploader:
         """Render uploader và xử lý batch"""
         
         st.write("**Upload CSV với các cột:**")
-        st.code("amt,hour,distance_km,age,day_of_week,merchant,category")
+        st.code("amt,hour,distance_km,age,merchant,category")
         
         # Download template
         template_df = pd.DataFrame({
@@ -140,7 +81,6 @@ class CSVBatchUploader:
             "hour": [14, 2, 23],
             "distance_km": [10.0, 150.0, 5.0],
             "age": [35, 45, 28],
-            "day_of_week": [0, 5, 6],
             "merchant": ["Shop A", "Shop B", "Shop C"],
             "category": ["shopping_net", "gas_transport", "misc_net"]
         })
@@ -175,22 +115,28 @@ class CSVBatchUploader:
                 st.error(f"❌ Lỗi đọc file: {str(e)}")
     
     def _process_batch(self, df: pd.DataFrame):
-        """Xử lý batch prediction"""
+        """Xử lý batch prediction với raw data"""
         
-        # Convert to list of features
+        # Convert to list of raw transactions (không cần build features)
         transactions = []
         for _, row in df.iterrows():
-            form = ManualPredictionForm()
-            features = form._build_features(
-                amt=row.get('amt', 0),
-                hour=int(row.get('hour', 12)),
-                distance_km=row.get('distance_km', 10),
-                age=int(row.get('age', 35)),
-                day_of_week=int(row.get('day_of_week', 0)),
-                merchant=row.get('merchant'),
-                category=row.get('category')
-            )
-            transactions.append(features)
+            trans = {
+                "amt": float(row.get('amt', 0))
+            }
+            
+            # Add optional fields if present
+            if 'hour' in row and pd.notna(row['hour']):
+                trans["hour"] = int(row['hour'])
+            if 'distance_km' in row and pd.notna(row['distance_km']):
+                trans["distance_km"] = float(row['distance_km'])
+            if 'age' in row and pd.notna(row['age']):
+                trans["age"] = int(row['age'])
+            if 'merchant' in row and pd.notna(row['merchant']):
+                trans["merchant"] = str(row['merchant'])
+            if 'category' in row and pd.notna(row['category']):
+                trans["category"] = str(row['category'])
+            
+            transactions.append(trans)
         
         # Call batch API
         with st.spinner(f"🔮 Đang xử lý {len(transactions)} giao dịch..."):
@@ -199,6 +145,13 @@ class CSVBatchUploader:
         if result["success"]:
             data = result["data"]
             summary = data.get("summary", {})
+            
+            # Generate AI insight using shared component
+            with st.spinner("🤖 Đang phân tích kết quả batch..."):
+                batch_insight = get_batch_ai_insight(summary)
+            
+            # Display AI insight first
+            st.info(batch_insight)
             
             # Display summary
             st.success(f"""
