@@ -1,10 +1,15 @@
 """
 Airflow DAG for Automated Model Retraining (TaskFlow API)
 - Check data availability in Silver layer
-- Train ML models (RandomForest, LogisticRegression) via Spark
+- Train ML models with Sklearn (RandomForest, LogisticRegression)
 - Verify models logged to MLflow Tracking
 - Send completion notification
 - Schedule: Daily at 2 AM
+
+Training Script: ml_training_sklearn.py (Sklearn implementation)
+- Faster training than PySpark ML
+- Better metrics (scikit-learn RandomForest)
+- Auto-promotion to Production if metrics good
 
 TaskFlow API Benefits:
 - Cleaner, more Pythonic code
@@ -54,25 +59,24 @@ def model_retraining_pipeline():
         """Check if Silver layer has sufficient data for training"""
         logger.info("📈 Checking data availability in Silver layer...")
         
-        # Simplified check - in production, you'd query Delta table count
-        # For now, just check if MinIO/lakehouse is accessible
+        # Check if sklearn training script exists
         try:
             result = subprocess.run(
-                ['docker', 'exec', 'spark-master', 'ls', '/app/ml_training_job.py'],
+                ['docker', 'exec', 'spark-master', 'ls', '/app/ml_training_sklearn.py'],
                 capture_output=True,
                 text=True,
                 check=True
             )
-            logger.info("✅ Training script found, data layer accessible")
+            logger.info("✅ Sklearn training script found, data layer accessible")
             return {"status": "ready", "records": "unknown"}
         except subprocess.CalledProcessError:
-            logger.error("❌ Training script not found")
+            logger.error("❌ Sklearn training script not found")
             return {"status": "not_ready", "records": 0}
 
     @task(execution_timeout=timedelta(hours=2))
     def train_ml_models() -> dict:
-        """Train ML models (RandomForest, LogisticRegression)"""
-        logger.info("🧠 Starting ML model training...")
+        """Train ML models with Sklearn (RandomForest, LogisticRegression)"""
+        logger.info("🧠 Starting ML model training with Sklearn...")
         logger.info(f"⏰ Training started at: {datetime.now()}")
         
         try:
@@ -93,7 +97,7 @@ def model_retraining_pipeline():
                     '--conf', 'spark.executorEnv.AWS_ACCESS_KEY_ID=minio',
                     '--conf', 'spark.executorEnv.AWS_SECRET_ACCESS_KEY=minio123',
                     '--conf', 'spark.executorEnv.MLFLOW_S3_ENDPOINT_URL=http://minio:9000',
-                    '/app/ml_training_job.py'
+                    '/app/ml_training_sklearn.py'
                 ],
                 capture_output=True,
                 text=True,
