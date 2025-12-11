@@ -274,9 +274,8 @@ mlflow                      Up          0.0.0.0:5001->5000/tcp
 
 **PostgreSQL database schema:**
 
-```bash
-docker exec postgres psql -U postgres -d frauddb -c "\dt"
-```
+````bash
+docker exec postgres psql -U postgres -d frauddb -c "\dt"# Lưu ý: Database name là 'frauddb' (không phải 'sparkov')```
 
 Expected tables:
 
@@ -289,7 +288,7 @@ Expected tables:
 
 ```bash
 docker exec kafka kafka-topics.sh --bootstrap-server localhost:9092 --list
-```
+````
 
 Expected: `postgres.public.transactions` (CDC topic)
 
@@ -413,6 +412,81 @@ schedule_interval="0 2 * * *"  # Cron: 2:00 AM daily
 
 ---
 
+## 7. Tạo SQL Views cho Gold Layer (⚠️ BƯớc Bắt Buộc)
+
+### Tại sao cần bước này?
+
+**⚠️ QUAN TRỌNG:** SQL views trong file `sql/gold_layer_views_delta.sql` **KHÔNG được tự động tạo** bởi Airflow DAGs. Bạn **PHẢI tạo thủ công** để:
+
+- Chatbot có thể query các views phân tích (state_summary, merchant_analysis, v.v.)
+- Metabase có thể tạo dashboards từ các views
+- Schema loader của Chatbot có thể load đầy đủ metadata
+
+### Cách tạo views
+
+**Option 1: Tạo tất cả 9 views cùng lúc**
+
+```bash
+# Connect vào Trino CLI
+docker exec -it trino trino --server localhost:8081
+
+# Trong Trino CLI, copy-paste toàn bộ nội dung file sql/gold_layer_views_delta.sql
+# Hoặc chạy từng view một
+```
+
+**Option 2: Chạy từ file**
+
+```bash
+# Copy file vào container
+docker cp sql/gold_layer_views_delta.sql trino:/tmp/
+
+# Execute file
+docker exec trino trino --server localhost:8081 --file /tmp/gold_layer_views_delta.sql
+```
+
+**Option 3: Chạy từng view riêng biệt**
+
+```bash
+docker exec trino trino --server localhost:8081 --execute "
+CREATE OR REPLACE VIEW delta.gold.state_summary AS
+SELECT
+    state,
+    COUNT(*) as total_transactions,
+    SUM(CASE WHEN is_fraud=1 THEN 1 ELSE 0 END) as fraud_count,
+    ROUND(100.0 * SUM(CASE WHEN is_fraud=1 THEN 1 ELSE 0 END) / COUNT(*), 2) as fraud_rate,
+    ROUND(AVG(amount), 2) as avg_amount
+FROM delta.gold.fact_transactions
+GROUP BY state
+ORDER BY fraud_rate DESC;
+"
+```
+
+### Verify views đã tạo
+
+```bash
+docker exec trino trino --server localhost:8081 --execute "SHOW TABLES FROM delta.gold;"
+```
+
+Expected output bao gồm:
+
+- `daily_summary`
+- `hourly_summary`
+- `state_summary`
+- `category_summary`
+- `amount_summary`
+- `latest_metrics`
+- `fraud_patterns`
+- `merchant_analysis`
+- `time_period_analysis`
+
+### Test một view
+
+```bash
+docker exec trino trino --server localhost:8081 --execute "SELECT * FROM delta.gold.state_summary LIMIT 5;"
+```
+
+---
+
 ## Real-time Detection Setup
 
 ### Khởi động Real-time Alert Service
@@ -501,7 +575,7 @@ INFO - 🚨 ALERT sent for <trans_num> (HIGH risk)
 | **MLflow**     | http://localhost:5001      | -                       | ML experiment tracking            |
 | **FastAPI**    | http://localhost:8000/docs | -                       | Swagger API documentation         |
 | **MinIO**      | http://localhost:9001      | minioadmin / minioadmin | Object storage console            |
-| **Trino**      | http://localhost:8085      | -                       | SQL query engine                  |
+| **Trino**      | http://localhost:8085      | -                       | SQL query engine (internal: 8081) |
 | **Kafka UI**   | -                          | -                       | Not included (optional: AKHQ)     |
 | **Metabase**   | http://localhost:3000      | -                       | BI Dashboard (if configured)      |
 | **PostgreSQL** | localhost:5432             | postgres / postgres123  | Direct DB access (psql, DBeaver)  |

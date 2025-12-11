@@ -17,12 +17,12 @@ while ($retries -lt $maxRetries) {
 }
 
 # Wait for database creation
-Write-Host "`nChecking Sparkov database..." -ForegroundColor Cyan
+Write-Host "`nChecking frauddb database..." -ForegroundColor Cyan
 $retries = 0
 while ($retries -lt $maxRetries) {
-    $result = docker exec postgres psql -U postgres -d sparkov -c "SELECT 1" 2>&1
+    $result = docker exec postgres psql -U postgres -d frauddb -c "SELECT 1" 2>&1
     if ($LASTEXITCODE -eq 0) {
-        Write-Host "✓ Sparkov database exists" -ForegroundColor Green
+        Write-Host "✓ frauddb database exists" -ForegroundColor Green
         break
     }
     $retries++
@@ -34,7 +34,7 @@ while ($retries -lt $maxRetries) {
 Write-Host "`nChecking data load..." -ForegroundColor Cyan
 $retries = 0
 while ($retries -lt $maxRetries) {
-    $count = docker exec postgres psql -U postgres -d sparkov -t -c "SELECT COUNT(*) FROM transactions;" 2>&1
+    $count = docker exec postgres psql -U postgres -d frauddb -t -c "SELECT COUNT(*) FROM transactions;" 2>&1
     if ($LASTEXITCODE -eq 0 -and $count -match '\d+' -and [int]$count.Trim() -gt 0) {
         Write-Host "✓ Data loaded: $($count.Trim()) records" -ForegroundColor Green
         break
@@ -87,7 +87,7 @@ if ($connectors.Count -eq 0) {
     "database.port": "5432",
     "database.user": "postgres",
     "database.password": "postgres",
-    "database.dbname": "sparkov",
+    "database.dbname": "frauddb",
     "database.server.name": "postgres",
     "table.include.list": "public.transactions",
     "plugin.name": "pgoutput",

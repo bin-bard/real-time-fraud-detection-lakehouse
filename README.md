@@ -174,13 +174,15 @@ docker exec airflow-scheduler airflow dags trigger model_retraining_taskflow
 
 ## Các tính năng nổi bật
 
-### 1. Real-time Fraud Detection & Slack Alerts
+### 1. Real-time Fraud Detection & Slack Alerts ✅
 
 Phát hiện gian lận trong < 1 giây và gửi cảnh báo tức thì:
 
 - **Luồng**: Transaction → CDC → Kafka → Spark → ML → Slack
 - **Policy**: Cảnh báo **TẤT CẢ** fraud (LOW/MEDIUM/HIGH)
 - **Thông tin**: Trans ID, Amount, Customer, Risk Level, Probability, Explanation
+- **Implemented**: `spark/app/realtime_prediction_job.py` - Fully functional
+- **Setup**: Cấu hình `SLACK_WEBHOOK_URL` trong `.env` file
 
 ```bash
 # Khởi động Real-time Detection
@@ -219,12 +221,13 @@ Hỗ trợ 3 loại câu hỏi:
 
 ### 3. Machine Learning Pipeline
 
-- **Thuật toán**: RandomForest + LogisticRegression (ensemble)
-- **Features**: 20 engineered features (amount, distance, time, demographics)
-- **Class balancing**: SMOTE oversampling (1:1 ratio)
-- **Performance**: 96.8% accuracy, 99.5% AUC-ROC
+- **Thuật toán**: RandomForest (200 trees) + LogisticRegression
+- **Features**: 15 engineered features (amount, distance, time, demographics)
+- **Class balancing**: Random undersampling (1:1 fraud:non-fraud ratio)
+- **Performance**: 92.8% accuracy, 98.4% AUC-ROC
 - **Training**: Tự động hàng ngày 2h sáng (Airflow DAG)
 - **Tracking**: MLflow experiment tracking + model registry
+- **Model names**: `sklearn_fraud_randomforest` (Production), `sklearn_fraud_logistic` (Alternative)
 
 ### 4. Data Lakehouse với Delta Lake
 
@@ -254,8 +257,8 @@ Extract Features → Train → Evaluate → Register MLflow → Deploy API
 
 | Metric                   | Giá trị            | Ghi chú                          |
 | ------------------------ | ------------------ | -------------------------------- |
-| **ML Accuracy**          | 96.8%              | RandomForest on balanced dataset |
-| **AUC-ROC**              | 99.5%              | Excellent discrimination         |
+| **ML Accuracy**          | 92.8%              | RandomForest on balanced dataset |
+| **AUC-ROC**              | 98.4%              | Excellent discrimination         |
 | **Prediction Latency**   | < 100ms            | FastAPI inference time           |
 | **End-to-end Latency**   | < 1s               | Transaction → Slack Alert        |
 | **Streaming Throughput** | 200-500 tx/batch   | 10-second micro-batches          |

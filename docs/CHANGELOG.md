@@ -816,58 +816,74 @@ docker exec trino trino --server localhost:8081 --execute "SHOW TABLES FROM delt
 
 ### Q11: Alert System có hoạt động không?
 
-**A:** KHÔNG - Alert System chưa được implement!
+**A:** ✅ CÓ - Slack Alert System đã được implement đầy đủ!
 
 **Hiện trạng:**
 
-- ✅ FastAPI có endpoint `/predict` trả về `risk_level: HIGH/MEDIUM/LOW`
-- ✅ Code có thể detect high-risk transactions
-- ❌ KHÔNG có tự động gửi email/Slack/notification
-- ❌ Function `send_alert()` trong docs chỉ là **ví dụ giả định**
+- ✅ Real-time alerting service chạy trong `spark-realtime-prediction` container
+- ✅ Gửi Slack alerts cho **TẤT CẢ** fraud predictions (LOW/MEDIUM/HIGH risk)
+- ✅ Implementation trong `spark/app/realtime_prediction_job.py`
+- ✅ Cấu hình qua `SLACK_WEBHOOK_URL` environment variable
+- ✅ Alert bao gồm: Transaction ID, Amount, Customer, Risk Level, Probability, Explanation
 
-**Để implement Alert System, bạn cần:**
+**Cách sử dụng:**
 
-**Option 1: Email Alert**
+**Bước 1: Cấu hình Slack Webhook**
 
-```python
-import smtplib
-from email.mime.text import MIMEText
+1. Tạo Slack App: https://api.slack.com/apps
+2. Bật "Incoming Webhooks"
+3. Tạo webhook cho channel của bạn
+4. Copy webhook URL (dạng: `https://hooks.slack.com/services/T.../B.../X...`)
 
-def send_email_alert(trans_num, probability):
-    msg = MIMEText(f"High risk: {trans_num} ({probability:.2%})")
-    msg['Subject'] = '⚠️ Fraud Alert'
-    msg['From'] = 'alert@company.com'
-    msg['To'] = 'security@company.com'
+**Bước 2: Thêm vào `.env`**
 
-    smtp = smtplib.SMTP('smtp.gmail.com', 587)
-    smtp.starttls()
-    smtp.login('your-email@gmail.com', 'app-password')
-    smtp.send_message(msg)
-    smtp.quit()
+```bash
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
 ```
 
-**Option 2: Slack Alert**
+**Bước 3: Restart service**
 
-```python
-import requests
-
-def send_slack_alert(result):
-    webhook_url = "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
-    message = {
-        "text": f"🚨 High Risk: {result['trans_num']} ({result['fraud_probability']:.2%})"
-    }
-    requests.post(webhook_url, json=message)
+```bash
+docker-compose up -d --build spark-realtime-prediction
 ```
 
-**Sử dụng:**
+**Bước 4: Test**
 
-```python
-result = requests.post('http://localhost:8000/predict', json=features).json()
-if result['risk_level'] == 'HIGH':
-    send_email_alert(result['trans_num'], result['fraud_probability'])
-    # hoặc
-    send_slack_alert(result)
+```bash
+# Insert test transaction
+docker exec data-producer python producer.py --count 1
+
+# Kiểm tra logs
+docker logs spark-realtime-prediction --tail 20
+
+# Mong đợi:
+# ✅ Slack alert sent: trans_xxx (HIGH)
 ```
+
+**Alert Format (Slack message):**
+
+```
+🚨 FRAUD ALERT - HIGH RISK 🚨
+
+Transaction: trans_0001234567
+Amount: $850.50
+Customer: John Doe
+Time: 2025-12-05 02:30:15
+
+Risk Level: HIGH
+Fraud Probability: 89.5%
+
+Explanation:
+- Giao dịch có giá trị cao ($850.50)
+- Giao dịch xa 152.3km từ địa chỉ khách hàng
+- Giao dịch vào lúc 2h (đêm khuya/sáng sớm)
+```
+
+**Lưu ý:**
+
+- Nếu không có `SLACK_WEBHOOK_URL`, service vẫn hoạt động bình thường (chỉ skip alerting)
+- Alerts chỉ gửi cho transactions từ CDC stream (real-time), không gửi cho chatbot predictions
+- Để test webhook: `curl -X POST $SLACK_WEBHOOK_URL -H "Content-Type: application/json" -d '{"text":"Test"}'`
 
 ---
 

@@ -254,7 +254,61 @@ result = agent_executor.invoke({"input": user_question})
 - Complex query handling
 - Better accuracy
 
-### 3.2. Feature Engineering Logic
+### 3.2. Prediction API Endpoints
+
+**FastAPI có 2 endpoints chính:**
+
+**1. `/predict` - Full Features (deprecated for manual use)**
+
+Yêu cầu client gửi đầy đủ 15 features đã engineer:
+
+```python
+class TransactionFeatures(BaseModel):
+    amt: float
+    log_amount: float
+    amount_bin: int
+    is_zero_amount: int
+    is_high_amount: int
+    distance_km: float
+    is_distant_transaction: int
+    age: int
+    gender_encoded: int
+    hour: int
+    day_of_week: int
+    is_weekend: int
+    is_late_night: int
+    hour_sin: float
+    hour_cos: float
+```
+
+**2. `/predict/raw` - Raw Transaction (recommended)**
+
+**Chatbot và manual predictions sử dụng endpoint này!**
+
+Chỉ cần gửi raw data, API tự động tính features:
+
+```python
+class RawTransactionInput(BaseModel):
+    amt: float  # Required
+    hour: Optional[int] = None
+    distance_km: Optional[float] = None
+    age: Optional[int] = None
+    gender: Optional[str] = None  # 'M' or 'F'
+    day_of_week: Optional[int] = None
+    trans_num: Optional[str] = None
+```
+
+API tự động:
+
+- Tính `log_amount`, `amount_bin`, `is_high_amount`, `is_zero_amount`
+- Tính `hour_sin`, `hour_cos`
+- Tính `is_weekend`, `is_late_night`, `is_distant_transaction`
+- Fill defaults cho missing values
+- Chạy feature engineering pipeline
+- Gọi ML model
+- Lưu prediction vào DB (nếu là real-time transaction, không là CHAT*/MANUAL*)
+
+### 3.3. Feature Engineering Logic
 
 **File:** `services/fraud-detection-api/app/feature_engineering.py`
 
@@ -710,9 +764,9 @@ Training fraud: 50 * 0.8 = 40
 Testing fraud: 50 * 0.2 = 10
 ```
 
-**Số lượng thấp là EXPECTED** với imbalanced dataset. SMOTE sẽ oversample training data.
+**Số lượng thấp là EXPECTED** với imbalanced dataset. Undersampling sẽ giảm non-fraud xuống bằng fraud (1:1 ratio).
 
-**Không cần fix** - đây không phải bug.
+**Không cần fix** - đây không phải bug. Training data sau khi balance sẽ nhỏ hơn test data.
 
 ### 5.5. Bug #5: Checkpoint Recovery Failed
 

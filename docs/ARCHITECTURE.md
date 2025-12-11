@@ -92,11 +92,12 @@ Xây dựng **Modern Data Platform** giải quyết bài toán phát hiện gian
 ┌────────────▼────────────────────────────────────────────────────┐
 │             LAYER 3: SILVER LAYER                               │
 ├─────────────────────────────────────────────────────────────────┤
-│ Engineered Features (40+ features)                              │
+│ Engineered Features (40+ potential features in Silver)          │
 │ ▸ Geographic: distance_km, is_distant_transaction               │
 │ ▸ Demographic: age, gender_encoded                              │
 │ ▸ Time: hour, day_of_week, is_weekend, cyclic encoding          │
 │ ▸ Amount: log_amount, amount_bin, is_zero_amount                │
+│ ▸ ML uses 15 features (subset of engineered features)          │
 │ Storage: Delta Lake (s3a://lakehouse/silver)                    │
 └────────────┬────────────────────────────────────────────────────┘
              │
@@ -188,11 +189,11 @@ Xây dựng **Modern Data Platform** giải quyết bài toán phát hiện gian
 - Input: Bronze Delta Lake (incremental read)
 - Processing:
   - Data quality checks (drop nulls, fill missing)
-  - Feature engineering (40+ features)
+  - Feature engineering (40+ potential features)
   - Type conversions
   - Validation
 
-**Feature Engineering (40+ Features)**
+**Feature Engineering (40+ Potential Features - 15 used for ML)**
 
 **Geographic Features:**
 
@@ -218,6 +219,8 @@ Xây dựng **Modern Data Platform** giải quyết bài toán phát hiện gian
 - `amount_bin`: Binning 0-6 (< $10, $10-$50, $50-$100, ...)
 - `is_high_amount`: Boolean (> $1000)
 - `is_zero_amount`: Boolean (= 0)
+
+**Lưu ý:** Tổng cộng **15 features** được sử dụng cho ML training (không bao gồm category features phức tạp)
 
 **Category Features:**
 
@@ -454,6 +457,14 @@ Slack Alert (ALL risk levels: LOW/MEDIUM/HIGH)
 
 **Latency:** < 1 giây từ INSERT đến Slack notification
 
+**⚠️ Real-time Alert System:**
+
+- ✅ **FULLY IMPLEMENTED** trong `spark/app/realtime_prediction_job.py`
+- Gửi Slack alerts cho **TẤT CẢ** fraud predictions (LOW/MEDIUM/HIGH risk)
+- Cấu hình: `SLACK_WEBHOOK_URL` trong `.env` file
+- Alert format: Transaction ID, Amount, Risk Level, Probability, Explanation
+- Nếu không có webhook URL, service vẫn hoạt động (chỉ skip alerting)
+
 **Lưu ý:**
 
 - Service này **KHÔNG insert vào transactions table** (producer đã insert)
@@ -467,8 +478,8 @@ Slack Alert (ALL risk levels: LOW/MEDIUM/HIGH)
 ```
 Silver Layer Features (Delta Lake)
     ↓ Airflow DAG (2 AM daily)
-Extract features (20 selected features)
-    ↓ SMOTE Oversampling
+Extract features (15 selected features)
+    ↓ Random Undersampling
 Balanced dataset (1:1 fraud ratio)
     ↓ Train/Test split (80/20)
 Train RandomForest + LogisticRegression
@@ -859,95 +870,102 @@ fact_transactions.category_id → dim_category.category_id
 
 ## 7. ML Pipeline
 
-### 7.1. Feature Selection (20 features cho ML)
+### 7.1. Feature Selection (15 features cho ML)
 
 **Selected from 40+ Silver features:**
 
 ```python
 ML_FEATURES = [
-    # Amount
-    'amt', 'log_amount', 'amount_bin', 'is_high_amount',
+    # Amount features (5)
+    'amt', 'log_amount', 'amount_bin', 'is_zero_amount', 'is_high_amount',
 
-    # Geographic
+    # Geographic features (2)
     'distance_km', 'is_distant_transaction',
 
-    # Time
+    # Time features (6)
     'hour', 'day_of_week', 'is_weekend', 'is_late_night',
     'hour_sin', 'hour_cos',
 
-    # Demographic
-    'age', 'gender_encoded',
-
-    # Category
-    'category_encoded', 'is_high_risk_category',
-
-    # Merchant
-    'is_fraud_merchant',
-
-    # Interaction
-    'amt_distance_interaction', 'amt_hour_interaction',
-    'distance_hour_interaction'
+    # Demographic features (2)
+    'age', 'gender_encoded'
 ]
 ```
 
-### 7.2. Class Balancing với SMOTE
+**Lưu ý:** Các features phức tạp như `category_encoded`, interaction features, và merchant-level features không được sử dụng trong implementation hiện tại do limitations của training data availability và để tránh overfitting.
+
+### 7.2. Class Balancing với Undersampling
 
 **Problem:** Imbalanced dataset (fraud rate 0.5-1%)
 
-**Solution:** SMOTE (Synthetic Minority Over-sampling Technique)
+**Solution:** Random Undersampling của majority class (non-fraud)
 
 ```python
-from imblearn.over_sampling import SMOTE
+# Implementation trong ml_training_sklearn.py
+def handle_class_imbalance(df, label_col="is_fraud"):
+    fraud_df = df.filter(col(label_col) == 1)
+    nonfraud_df = df.filter(col(label_col) == 0)
 
-smote = SMOTE(sampling_strategy=1.0, random_state=42)
-X_resampled, y_resampled = smote.fit_resample(X_train, y_train)
+    fraud_count = fraud_df.count()
+    nonfraud_count = nonfraud_df.count()
+
+    # Undersample non-fraud to match fraud count (1:1 ratio)
+    fraction = min(1.0, fraud_count / nonfraud_count)
+    nonfraud_sampled = nonfraud_df.sample(withReplacement=False, fraction=fraction, seed=42)
+
+    # Combine and shuffle
+    balanced_df = fraud_df.union(nonfraud_sampled)
+    return balanced_df
 
 # Before: Fraud ~0.5% (500 fraud / 99,500 legit)
-# After:  Fraud 50% (99,500 fraud / 99,500 legit)
+# After:  Fraud 50% (500 fraud / 500 legit)
 ```
 
 **Benefits:**
 
-- Balanced training data
+- Balanced training data (1:1 ratio)
+- Faster training (smaller dataset)
+- No synthetic data (preserves real distribution)
 - Better recall on fraud class
 - Reduced false negatives
 
+**Tradeoff:** Loss of non-fraud information, but acceptable given large dataset size.
+
 ### 7.3. Model Training
 
-**2 Models (Ensemble):**
+**2 Models (Registered separately in MLflow):**
 
 **RandomForestClassifier:**
 
 ```python
+# Model name: sklearn_fraud_randomforest
 rf_model = RandomForestClassifier(
-    n_estimators=100,
-    max_depth=10,
-    min_samples_split=10,
-    min_samples_leaf=5,
-    class_weight='balanced',
-    random_state=42
+    n_estimators=200,  # More trees for better accuracy
+    max_depth=30,      # Deeper trees
+    min_samples_split=2,
+    random_state=42,
+    n_jobs=-1
 )
 ```
 
 **LogisticRegression:**
 
 ```python
+# Model name: sklearn_fraud_logistic
 lr_model = LogisticRegression(
     penalty='l2',
     C=1.0,
-    class_weight='balanced',
     max_iter=1000,
-    random_state=42
+    random_state=42,
+    n_jobs=-1
 )
 ```
 
-**Ensemble Strategy:** Average probabilities
+**Model Registration:**
 
-```python
-rf_proba = rf_model.predict_proba(X_test)[:, 1]
-lr_proba = lr_model.predict_proba(X_test)[:, 1]
-ensemble_proba = (rf_proba + lr_proba) / 2
-```
+- RandomForest: `sklearn_fraud_randomforest` (Production model mặc định)
+- Logistic: `sklearn_fraud_logistic` (Alternative model)
+- Models được train và register riêng biệt trong MLflow
+- FastAPI service load model từ MLflow registry (default: RandomForest Production version)
 
 ### 7.4. Model Evaluation
 
@@ -989,7 +1007,7 @@ True Positives:  49,650
 - accuracy, auc, precision, recall, f1
 - Training time
 - Dataset size
-- Fraud ratio (before/after SMOTE)
+- Fraud ratio (before/after undersampling)
 
 **Model Registry:**
 

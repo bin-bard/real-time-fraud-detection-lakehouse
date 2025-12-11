@@ -239,6 +239,48 @@ Dự đoán hàng loạt transactions từ file CSV.
 
 ---
 
+### 1.8. Chatbot Architecture (Technical)
+
+**Kinh truc hiện tại:** LangChain ReAct Agent (Modular Design)
+
+**Code structure:**
+
+```
+fraud-chatbot/
+├── src/
+│   ├── main.py              # Streamlit entry point
+│   ├── core/                # Business logic
+│   │   ├── agent.py         # LangChain ReAct Agent
+│   │   ├── tools.py         # Agent Tools (QueryDatabase, PredictFraud)
+│   │   └── schema_loader.py # Dynamic schema caching
+│   ├── components/          # UI components
+│   ├── database/            # DB connections
+│   └── utils/               # Helpers
+└── app/
+    └── chatbot.py        # OLD/DEPRECATED - Không dùng nữa!
+```
+
+**⚠️ Lưu ý quan trọng:**
+
+- File `app/chatbot.py` là **code cũ/đã bị thay thế** (monolithic, không dùng LangChain)
+- Chatbot thực tế chạy từ `src/main.py` và các modules trong `src/`
+- Dockerfile đã được cập nhật để chạy `src/main.py`
+
+**Agent flow:**
+
+1. User question → Gemini LLM
+2. LLM reasoning: Chọn tool (QueryDatabase hoặc PredictFraud)
+3. Execute tool → Observation
+4. LLM reasoning: Trả lời final hoặc dùng tool khác
+5. Return answer
+
+**Dynamic schema caching:**
+
+- Schema loader cache Trino metadata (5 phút TTL)
+- Cải thiện performance từ 2-5s xuống < 1ms (99%+ faster)
+
+---
+
 ## 2. Real-time Fraud Detection & Slack Alerts
 
 ### Tổng quan
@@ -464,9 +506,19 @@ curl http://localhost:8000/model/info
 
 ---
 
-#### POST `/predict/raw`
+#### POST `/predict/raw` ⭐ (RECOMMENDED - Chatbot & Real-time dùng)
 
-Dự đoán fraud cho 1 transaction (real-time alert service sử dụng).
+Dự đoán fraud cho 1 transaction với **raw data** (chỉ cần gửi amt + một vài fields, API tự tính features).
+
+**ƯU ĐIỂM:**
+
+- Chỉ cần gửi thông tin thô (`amt`, `hour`, `distance_km`, v.v.)
+- API tự động tính toán 15 features cần thiết:
+  - `log_amount`, `amount_bin`, `is_high_amount`, `is_zero_amount`
+  - `hour_sin`, `hour_cos`, `is_late_night`, `is_weekend`
+  - `is_distant_transaction`, `gender_encoded`
+- Chatbot, Manual Form, CSV Upload đều dùng endpoint này
+- Real-time alert service cũng dùng endpoint này
 
 **Request:**
 
@@ -500,6 +552,15 @@ curl -X POST http://localhost:8000/predict/raw \
 #### POST `/predict/explained`
 
 Dự đoán fraud với giải thích từ Gemini LLM (chatbot sử dụng).
+
+**Đặc điểm:**
+
+- Giống `/predict/raw` nhưng thêm LLM explanation
+- Transaction ID tự động sinh: `CHAT_{timestamp}` (cho chatbot) hoặc `MANUAL_{timestamp}` (cho manual form)
+- **Lưu ý:** Predictions với `CHAT_*` hoặc `MANUAL_*` trans_num **KHÔNG được lưu vào database**
+  - Lý do: Foreign key constraint (`fraud_predictions.trans_num` -> `transactions.trans_num`)
+  - Chỉ có real-time transactions từ CDC stream mới có record trong `transactions` table
+  - Chatbot/Manual predictions là "giả lập" nên không cần persist
 
 **Request:**
 
