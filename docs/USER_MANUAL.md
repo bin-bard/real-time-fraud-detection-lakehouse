@@ -257,14 +257,16 @@ fraud-chatbot/
 │   ├── database/            # DB connections
 │   └── utils/               # Helpers
 └── app/
-    └── chatbot.py        # OLD/DEPRECATED - Không dùng nữa!
+    ├── chatbot.py.deprecated  # OLD CODE - Đã đổi tên!
+    └── README_DEPRECATED.md   # Giải thích deprecated file
 ```
 
 **⚠️ Lưu ý quan trọng:**
 
-- File `app/chatbot.py` là **code cũ/đã bị thay thế** (monolithic, không dùng LangChain)
+- File `app/chatbot.py` đã **đổi tên thành `.deprecated`** (monolithic, không dùng LangChain)
 - Chatbot thực tế chạy từ `src/main.py` và các modules trong `src/`
 - Dockerfile đã được cập nhật để chạy `src/main.py`
+- Xem `app/README_DEPRECATED.md` để hiểu lý do deprecated
 
 **Agent flow:**
 
