@@ -607,7 +607,7 @@ CREATE TABLE producer_checkpoint (
 
 - PostgreSQL SERIAL primary key (auto-increment)
 - Debezium LSN (Log Sequence Number)
-- Spark streaming checkpoint (exactly-once)
+- Spark Structured Streaming checkpoint (exactly-once)
 
 ---
 

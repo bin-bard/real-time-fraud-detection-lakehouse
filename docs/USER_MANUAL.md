@@ -295,7 +295,7 @@ Hệ thống tự động phát hiện fraud ngay khi transaction được INSER
 Transaction INSERT → PostgreSQL
     ↓ Debezium CDC (< 1ms)
 Kafka Topic: postgres.public.transactions
-    ↓ Spark Streaming (10-second micro-batch)
+    ↓ Spark Structured Streaming (10-second micro-batch)
 Read CDC event → Call FastAPI /predict/raw
     ↓ ML Prediction
 Save to fraud_predictions table
@@ -749,7 +749,7 @@ docker exec airflow-scheduler airflow dags trigger model_retraining_taskflow
 - `lakehouse/bronze/` - Raw CDC data (Delta Lake)
 - `lakehouse/silver/` - Engineered features (Delta Lake)
 - `lakehouse/gold/` - Star schema (Delta Lake)
-- `lakehouse/checkpoints/` - Spark streaming offsets
+- `lakehouse/checkpoints/` - Spark Structured Streaming offsets
 
 **Quản lý:**
 

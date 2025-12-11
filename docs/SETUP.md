@@ -193,7 +193,7 @@ docker-compose up -d
 4. **debezium-connect** - CDC connector (8083)
 5. **minio** - Object storage (9000, 9001)
 6. **hive-metastore** - Metadata cache (9083) [Optional]
-7. **spark-streaming** - Bronze layer streaming
+7. **spark-streaming** - Bronze layer Structured Streaming
 8. **spark-silver** - Silver layer batch job
 9. **spark-gold** - Gold layer batch job
 10. **spark-realtime-prediction** - Real-time alert service
@@ -334,7 +334,7 @@ docker exec postgres psql -U postgres -d frauddb -c "\COPY transactions(trans_da
 
 - Transactions được INSERT trực tiếp vào PostgreSQL
 - Debezium CDC sẽ tự động capture và gửi vào Kafka
-- Spark streaming sẽ ghi vào Bronze layer
+- Spark Structured Streaming sẽ ghi vào Bronze layer
 
 ### Option B: Streaming Load (Mô phỏng real-time)
 
@@ -492,7 +492,7 @@ docker exec trino trino --server localhost:8081 --execute "SELECT * FROM delta.g
 ### Khởi động Real-time Alert Service
 
 ```bash
-# Start Spark Streaming alert service
+# Start Spark Structured Streaming alert service
 docker-compose up -d spark-realtime-prediction
 ```
 
@@ -502,7 +502,7 @@ docker-compose up -d spark-realtime-prediction
 Transaction INSERT → PostgreSQL
     ↓ Debezium CDC
 Kafka Topic: postgres.public.transactions
-    ↓ Spark Streaming (10-second micro-batch)
+    ↓ Spark Structured Streaming (10-second micro-batch)
 Read CDC event → Call FastAPI /predict/raw
     ↓ ML Prediction
 Save to fraud_predictions table

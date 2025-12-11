@@ -15,7 +15,7 @@ Dự án xây dựng pipeline xử lý dữ liệu end-to-end phát hiện gian 
 ▸ **CDC Real-time Streaming**: PostgreSQL → Debezium → Kafka → Bronze Layer (< 1 giây)
 ▸ **ETL Batch Processing**: Bronze → Silver → Gold (Delta Lake, Airflow mỗi 5 phút)
 ▸ **Machine Learning**: Huấn luyện tự động RandomForest + LogisticRegression (hàng ngày 2h sáng)
-▸ **Real-time Fraud Detection**: Spark Streaming → FastAPI ML Prediction → Slack Alert (< 1s)
+▸ **Real-time Fraud Detection**: Spark Structured Streaming → FastAPI ML Prediction → Slack Alert (< 1s)
 ▸ **AI Chatbot**: Streamlit + LangChain + Gemini API (hỏi đáp tiếng Việt, dự đoán fraud, phân tích SQL)
 ▸ **Interactive Dashboards**: Trino + Metabase + MLflow + Airflow monitoring
 
@@ -125,7 +125,7 @@ docker exec airflow-scheduler airflow dags trigger model_retraining_taskflow
 ┌────────────▼────────────────────────────────────────────┐
 │        LAYER 2: BRONZE LAYER                            │
 │  Raw CDC Data (22 columns) │ Delta Lake ACID           │
-│  Spark Streaming (10-second micro-batches)             │
+│  Spark Structured Streaming (10-second micro-batches)  │
 └────────────┬────────────────────────────────────────────┘
              │
 ┌────────────▼────────────────────────────────────────────┐

@@ -770,7 +770,7 @@ Testing fraud: 50 * 0.2 = 10
 
 ### 5.5. Bug #5: Checkpoint Recovery Failed
 
-**Triệu chứng:** Spark streaming restart → reprocess all data
+**Triệu chứng:** Spark Structured Streaming restart → reprocess all data
 
 **Nguyên nhân:** Checkpoint schema mismatch
 
@@ -1134,7 +1134,7 @@ ON CONFLICT (id) DO UPDATE SET
 \COPY transactions(...) FROM 'data.csv' ...
 
 # Debezium capture 50K CDC events → Kafka
-# Spark streaming process 50K events → Bronze
+# Spark Structured Streaming process 50K events → Bronze
 ```
 
 **Lưu ý:** Bulk load lớn (1M+ rows) có thể làm chậm Kafka. Khuyến nghị:

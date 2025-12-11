@@ -105,7 +105,7 @@ Xây dựng **Modern Data Platform** giải quyết bài toán phát hiện gian
 │             LAYER 2: BRONZE LAYER                               │
 ├─────────────────────────────────────────────────────────────────┤
 │ Raw CDC Data (22 columns)                                       │
-│ ▸ Spark Streaming (10-second micro-batches)                     │
+│ ▸ Spark Structured Streaming (10-second micro-batches)         │
 │ ▸ Delta Lake ACID transactions                                  │
 │ Storage: s3a://lakehouse/bronze/transactions                    │
 └────────────┬────────────────────────────────────────────────────┘
@@ -421,7 +421,7 @@ reload_api_model
 Transaction INSERT → PostgreSQL
     ↓ (< 1ms) Debezium CDC
 Kafka Topic: postgres.public.transactions
-    ↓ (10s batch) Spark Streaming
+    ↓ (10s batch) Spark Structured Streaming
 Bronze Layer (Delta Lake)
     ↓ (5 min) Airflow DAG
 Silver Layer (Features)
@@ -446,7 +446,7 @@ User Analysis / Chatbot
 Transaction INSERT → PostgreSQL
     ↓ Debezium CDC
 Kafka CDC Event
-    ↓ Spark Streaming (spark-realtime-prediction)
+    ↓ Spark Structured Streaming (spark-realtime-prediction)
 Read CDC → Extract features
     ↓ FastAPI /predict/raw
 ML Prediction (RandomForest + LogisticRegression)
@@ -699,7 +699,7 @@ CREATE TABLE fraud_predictions (
 Transaction INSERT → PostgreSQL
     ↓ Debezium CDC
 Kafka Topic
-    ↓ Spark Streaming (spark-realtime-prediction)
+    ↓ Spark Structured Streaming (spark-realtime-prediction)
 Read CDC Event → Extract features
     ↓ FastAPI /predict/raw
 ML Prediction
@@ -1042,24 +1042,24 @@ async def reload_model():
 
 ### 8.1. Chi tiết 16 services
 
-| Service                       | Technology            | Version | Port       | Mô tả                   |
-| ----------------------------- | --------------------- | ------- | ---------- | ----------------------- |
-| **postgres**                  | PostgreSQL            | 14      | 5432       | OLTP database với CDC   |
-| **zookeeper**                 | Apache Zookeeper      | 7.5.0   | 2181       | Kafka coordination      |
-| **kafka**                     | Apache Kafka          | 3.5     | 9092       | Message broker          |
-| **debezium-connect**          | Debezium              | 2.5     | 8083       | CDC connector           |
-| **minio**                     | MinIO                 | 2023    | 9000, 9001 | S3-compatible storage   |
-| **hive-metastore**            | Hive Metastore        | 3.1.3   | 9083       | Metadata cache          |
-| **spark-streaming**           | Apache Spark          | 3.4.1   | -          | Bronze layer streaming  |
-| **spark-silver**              | Apache Spark          | 3.4.1   | -          | Silver ETL batch        |
-| **spark-gold**                | Apache Spark          | 3.4.1   | -          | Gold ETL batch          |
-| **spark-realtime-prediction** | Apache Spark          | 3.4.1   | -          | Real-time alert service |
-| **trino**                     | Trino                 | 428     | 8085       | Distributed SQL engine  |
-| **mlflow**                    | MLflow                | 2.8.0   | 5001       | ML tracking & registry  |
-| **fraud-detection-api**       | FastAPI               | 0.104   | 8000       | Prediction API          |
-| **fraud-chatbot**             | Streamlit + LangChain | -       | 8501       | AI Chatbot              |
-| **airflow-scheduler**         | Apache Airflow        | 2.8.0   | -          | Workflow scheduler      |
-| **airflow-webserver**         | Apache Airflow        | 2.8.0   | 8081       | Airflow UI              |
+| Service                       | Technology                 | Version | Port       | Mô tả                   |
+| ----------------------------- | -------------------------- | ------- | ---------- | ----------------------- |
+| **postgres**                  | PostgreSQL                 | 14      | 5432       | OLTP database với CDC   |
+| **zookeeper**                 | Apache Zookeeper           | 7.5.0   | 2181       | Kafka coordination      |
+| **kafka**                     | Apache Kafka               | 3.5     | 9092       | Message broker          |
+| **debezium-connect**          | Debezium                   | 2.5     | 8083       | CDC connector           |
+| **minio**                     | MinIO                      | 2023    | 9000, 9001 | S3-compatible storage   |
+| **hive-metastore**            | Hive Metastore             | 3.1.3   | 9083       | Metadata cache          |
+| **spark-streaming**           | Spark Structured Streaming | 3.4.1   | -          | Bronze layer streaming  |
+| **spark-silver**              | Apache Spark               | 3.4.1   | -          | Silver ETL batch        |
+| **spark-gold**                | Apache Spark               | 3.4.1   | -          | Gold ETL batch          |
+| **spark-realtime-prediction** | Apache Spark               | 3.4.1   | -          | Real-time alert service |
+| **trino**                     | Trino                      | 428     | 8085       | Distributed SQL engine  |
+| **mlflow**                    | MLflow                     | 2.8.0   | 5001       | ML tracking & registry  |
+| **fraud-detection-api**       | FastAPI                    | 0.104   | 8000       | Prediction API          |
+| **fraud-chatbot**             | Streamlit + LangChain      | -       | 8501       | AI Chatbot              |
+| **airflow-scheduler**         | Apache Airflow             | 2.8.0   | -          | Workflow scheduler      |
+| **airflow-webserver**         | Apache Airflow             | 2.8.0   | 8081       | Airflow UI              |
 
 ### 8.2. Python Libraries chính
 

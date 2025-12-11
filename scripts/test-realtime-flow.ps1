@@ -1,5 +1,5 @@
 # Test Real-Time Fraud Detection Flow
-# Insert test transactions → Debezium CDC → Kafka → Spark Streaming → FastAPI → Slack
+# Insert test transactions → Debezium CDC → Kafka → Spark Structured Streaming → FastAPI → Slack
 
 Write-Host "================================" -ForegroundColor Cyan
 Write-Host "🚀 Testing Real-Time Fraud Detection Flow" -ForegroundColor Cyan

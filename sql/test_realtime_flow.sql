@@ -1,5 +1,5 @@
 -- Test Real-Time Fraud Detection Flow
--- Insert test transactions to trigger Debezium CDC → Kafka → Spark Streaming → API → Slack
+-- Insert test transactions to trigger Debezium CDC → Kafka → Spark Structured Streaming → API → Slack
 
 -- Transaction 1: HIGH RISK (Large amount + distant + late night)
 INSERT INTO transactions (
