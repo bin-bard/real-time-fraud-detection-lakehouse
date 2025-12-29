@@ -1,0 +1,919 @@
+================================================================================
+                     CÂU HỎI & TRẢ LỜI - BẢO VỆ DỰ ÁN
+           REAL-TIME FRAUD DETECTION LAKEHOUSE WITH SPARK
+================================================================================
+
+Tác giả: [Tên sinh viên]
+GVHD: [Tên giảng viên]
+Ngày cập nhật: 13/12/2025
+
+================================================================================
+                        PHẦN 1: KIẾN TRÚC HỆ THỐNG
+================================================================================
+
+Q1: Giải thích luồng dữ liệu qua các tầng PostgreSQL → Kafka → Bronze → Silver → Gold?
+---------------------------------------------------------------------------------------
+ĐÁP:
+
+Hệ thống sử dụng kiến trúc Lakehouse với 5 tầng xử lý dữ liệu:
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│ TẦNG 1: PostgreSQL (OLTP - Source of Truth)                               │
+├────────────────────────────────────────────────────────────────────────────┤
+│ - Role: Lưu trữ giao dịch thực tế (transactions table)                    │
+│ - Schema: 24 columns (raw data từ Sparkov dataset)                        │
+│   + trans_num (VARCHAR): Transaction ID                                   │
+│   + cc_num (BIGINT): Credit card number                                   │
+│   + amt (NUMERIC): Transaction amount                                     │
+│   + merchant (VARCHAR): Merchant name                                     │
+│   + category (VARCHAR): Transaction category                              │
+│   + trans_date_trans_time (TIMESTAMP): Transaction timestamp              │
+│   + first, last (VARCHAR): Customer name                                  │
+│   + gender (CHAR): M/F                                                    │
+│   + lat, long (DOUBLE): Customer location                                 │
+│   + merch_lat, merch_long (DOUBLE): Merchant location                     │
+│   + city, state, zip (VARCHAR/INT): Location details                      │
+│   + job (VARCHAR): Customer job                                           │
+│   + dob (DATE): Date of birth                                             │
+│   + is_fraud (SMALLINT): Ground truth label (0/1)                         │
+│                                                                            │
+│ - Data Volume: ~287,000 transactions (training dataset)                   │
+│ - Insert Method:                                                           │
+│   + Manual: CSV batch upload                                              │
+│   + Auto: data-producer container streaming từ fraudTrain.csv             │
+└────────────────────────────────────────────────────────────────────────────┘
+
+                                    ↓ Debezium CDC
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│ TẦNG 2: Kafka Topics (Streaming Layer)                                    │
+├────────────────────────────────────────────────────────────────────────────┤
+│ Topic: postgres.public.transactions                                        │
+│ - Format: Debezium CDC JSON                                                │
+│ - Message Structure:                                                       │
+│   {                                                                        │
+│     "before": null,                                                        │
+│     "after": {                                                             │
+│       "trans_num": "abc123...",                                            │
+│       "amt": 1200.50,                                                      │
+│       "trans_date_trans_time": 1702451234567890,  // microseconds         │
+│       ... (all 24 columns)                                                 │
+│     },                                                                     │
+│     "op": "c",  // c=create, u=update, d=delete                           │
+│     "ts_ms": 1702451234567                                                 │
+│   }                                                                        │
+│                                                                            │
+│ - Retention: 7 days (configurable)                                        │
+│ - Partitions: 1 (single broker setup)                                     │
+│ - Consumers:                                                               │
+│   1. bronze-streaming job (writes to Bronze layer)                        │
+│   2. spark-realtime-prediction job (for real-time fraud detection)        │
+└────────────────────────────────────────────────────────────────────────────┘
+
+                          ↓ Spark Structured Streaming (Bronze Job)
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│ TẦNG 3: Bronze Layer (Raw Events - Delta Lake)                            │
+├────────────────────────────────────────────────────────────────────────────┤
+│ Path: s3a://lakehouse/bronze/transactions                                 │
+│                                                                            │
+│ Transformations:                                                           │
+│   1. Parse Debezium JSON → Extract "after" payload                        │
+│   2. Convert microseconds timestamp → proper TIMESTAMP type                │
+│   3. Type casting:                                                         │
+│      - String → BIGINT (cc_num)                                            │
+│      - String → DOUBLE (lat, long, merch_lat, merch_long)                 │
+│      - BIGINT microseconds → TIMESTAMP (trans_date_trans_time)             │
+│   4. Add metadata columns:                                                 │
+│      - ingestion_time: TIMESTAMP (khi write vào Bronze)                   │
+│      - year, month, day: INT (partition keys từ trans_timestamp)          │
+│                                                                            │
+│ Schema: 27 columns (24 raw + 3 metadata)                                  │
+│   = All 24 columns from PostgreSQL                                        │
+│   + trans_timestamp (converted from microseconds)                          │
+│   + ingestion_time (current timestamp)                                     │
+│   + year, month, day (partition columns)                                   │
+│                                                                            │
+│ Format: Delta Lake (ACID transactions, time travel)                       │
+│ Partitioning: PARTITIONED BY (year, month, day)                           │
+│ Write Mode: Append (streaming micro-batches mỗi 10 giây)                  │
+│                                                                            │
+│ Data Quality: Raw data giữ nguyên, chưa clean                             │
+└────────────────────────────────────────────────────────────────────────────┘
+
+                               ↓ Spark Batch Job (Silver Job)
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│ TẦNG 4: Silver Layer (Feature Engineered - Delta Lake)                    │
+├────────────────────────────────────────────────────────────────────────────┤
+│ Path: s3a://lakehouse/silver/transactions                                 │
+│                                                                            │
+│ Feature Engineering Pipeline:                                              │
+│                                                                            │
+│ ┌─────────────────────────────────────────────────────────────────────┐   │
+│ │ A. GEOGRAPHIC FEATURES (2 features)                                 │   │
+│ ├─────────────────────────────────────────────────────────────────────┤   │
+│ │ 1. distance_km (DOUBLE):                                            │   │
+│ │    = haversine_distance(customer_lat, customer_long,                │   │
+│ │                         merchant_lat, merchant_long)                │   │
+│ │    Formula:                                                          │   │
+│ │      R = 6371  # Earth radius (km)                                  │   │
+│ │      φ1 = radians(lat1)                                             │   │
+│ │      φ2 = radians(lat2)                                             │   │
+│ │      Δφ = radians(lat2 - lat1)                                      │   │
+│ │      Δλ = radians(lon2 - lon1)                                      │   │
+│ │      a = sin(Δφ/2)² + cos(φ1)*cos(φ2)*sin(Δλ/2)²                   │   │
+│ │      c = 2 * atan2(√a, √(1-a))                                      │   │
+│ │      distance = R * c                                               │   │
+│ │                                                                      │   │
+│ │ 2. is_distant_transaction (INT): 1 if distance_km > 100 else 0     │   │
+│ └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                            │
+│ ┌─────────────────────────────────────────────────────────────────────┐   │
+│ │ B. DEMOGRAPHIC FEATURES (2 features)                                │   │
+│ ├─────────────────────────────────────────────────────────────────────┤   │
+│ │ 1. age (INT):                                                       │   │
+│ │    = floor((current_date - dob) / 365.25)                          │   │
+│ │    Handle: Debezium sends dob as days since epoch                  │   │
+│ │                                                                      │   │
+│ │ 2. gender_encoded (INT): 0 if gender='M' else 1                    │   │
+│ └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                            │
+│ ┌─────────────────────────────────────────────────────────────────────┐   │
+│ │ C. TIME FEATURES (6 features)                                       │   │
+│ ├─────────────────────────────────────────────────────────────────────┤   │
+│ │ 1. hour (INT): extract hour from trans_timestamp (0-23)            │   │
+│ │                                                                      │   │
+│ │ 2. day_of_week (INT): 0=Monday, 6=Sunday                           │   │
+│ │                                                                      │   │
+│ │ 3. is_weekend (INT): 1 if day_of_week >= 5 else 0                 │   │
+│ │                                                                      │   │
+│ │ 4. is_late_night (INT): 1 if hour < 6 or hour >= 23 else 0        │   │
+│ │                                                                      │   │
+│ │ 5. hour_sin (DOUBLE): sin(2π * hour / 24)                          │   │
+│ │    Purpose: Cyclic encoding - 23h gần 0h (không phải xa)          │   │
+│ │                                                                      │   │
+│ │ 6. hour_cos (DOUBLE): cos(2π * hour / 24)                          │   │
+│ │    Purpose: Hoàn thiện cyclic encoding (sin + cos = full circle)   │   │
+│ └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                            │
+│ ┌─────────────────────────────────────────────────────────────────────┐   │
+│ │ D. AMOUNT FEATURES (5 features)                                     │   │
+│ ├─────────────────────────────────────────────────────────────────────┤   │
+│ │ 1. log_amount (DOUBLE):                                             │   │
+│ │    = log(1 + amt)                                                   │   │
+│ │    Purpose: Normalize skewed distribution (amt có outliers lớn)    │   │
+│ │    Handle: log(0) = log(1) = 0 (avoid undefined)                   │   │
+│ │                                                                      │   │
+│ │ 2. is_zero_amount (INT): 1 if amt == 0 else 0                      │   │
+│ │                                                                      │   │
+│ │ 3. is_high_amount (INT): 1 if amt > 500 else 0                     │   │
+│ │                                                                      │   │
+│ │ 4. amount_bin (INT): Binning theo risk levels                       │   │
+│ │    = 0 if amt == 0                                                  │   │
+│ │    = 1 if amt <= 100                                                │   │
+│ │    = 2 if 100 < amt <= 300                                          │   │
+│ │    = 3 if 300 < amt <= 500                                          │   │
+│ │    = 4 if 500 < amt <= 1000                                         │   │
+│ │    = 5 if amt > 1000                                                │   │
+│ │                                                                      │   │
+│ │ 5. amt (DOUBLE): Original amount (kept for reference)              │   │
+│ └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                            │
+│ FINAL SCHEMA: 46 columns                                                  │
+│   = 24 raw columns (from Bronze)                                          │
+│   + 3 metadata (trans_timestamp, ingestion_time, partition keys)          │
+│   + 2 geographic features                                                  │
+│   + 2 demographic features                                                 │
+│   + 6 time features                                                        │
+│   + 5 amount features                                                      │
+│   + 4 partition metadata (year, month, day, hour)                         │
+│                                                                            │
+│ Format: Delta Lake                                                         │
+│ Write Mode: Overwrite (daily batch update via Airflow)                    │
+│ Update Frequency: Daily 3h sáng (sau khi Bronze layer có dữ liệu mới)    │
+└────────────────────────────────────────────────────────────────────────────┘
+
+                            ↓ Spark Batch Job (Gold Job)
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│ TẦNG 5: Gold Layer (Business-Ready - Star Schema)                         │
+├────────────────────────────────────────────────────────────────────────────┤
+│ Path: s3a://lakehouse/gold/                                               │
+│                                                                            │
+│ ┌───────────────────────────────────────────────────────────────────────┐ │
+│ │ FACT TABLE: fact_transactions                                         │ │
+│ ├───────────────────────────────────────────────────────────────────────┤ │
+│ │ Columns: 20+ aggregated features                                      │ │
+│ │   - transaction_key (trans_num) → PK                                  │ │
+│ │   - customer_key (cc_num) → FK to dim_customer                        │ │
+│ │   - time_key (yyyyMMddHH) → FK to dim_time                            │ │
+│ │   - location_key → FK to dim_location                                 │ │
+│ │   - merchant_key → FK to dim_merchant                                 │ │
+│ │   - transaction_amount (amt)                                          │ │
+│ │   - is_fraud (LABEL for ML)                                           │ │
+│ │   - distance_km                                                        │ │
+│ │   - customer_age_at_transaction (age)                                 │ │
+│ │   - log_amount, amount_bin                                            │ │
+│ │   - is_distant_transaction, is_late_night, is_high_amount            │ │
+│ │   - hour_sin, hour_cos                                                │ │
+│ │   - fraud_probability (if predicted)                                  │ │
+│ │   - risk_level (if predicted)                                         │ │
+│ └───────────────────────────────────────────────────────────────────────┘ │
+│                                                                            │
+│ ┌───────────────────────────────────────────────────────────────────────┐ │
+│ │ DIMENSION TABLES                                                       │ │
+│ ├───────────────────────────────────────────────────────────────────────┤ │
+│ │ dim_customer:                                                          │ │
+│ │   - customer_key (cc_num)                                             │ │
+│ │   - first_name, last_name                                             │ │
+│ │   - gender, age, dob                                                  │ │
+│ │   - city, state, zip                                                  │ │
+│ │   - job                                                               │ │
+│ │   - customer_risk_score (calculated)                                  │ │
+│ │                                                                        │ │
+│ │ dim_merchant:                                                          │ │
+│ │   - merchant_key (merchant name)                                      │ │
+│ │   - merchant_name                                                     │ │
+│ │   - category                                                          │ │
+│ │   - merch_lat, merch_long                                             │ │
+│ │   - merchant_fraud_rate (aggregated)                                  │ │
+│ │                                                                        │ │
+│ │ dim_time:                                                              │ │
+│ │   - time_key (yyyyMMddHH)                                             │ │
+│ │   - date, year, month, day                                            │ │
+│ │   - hour, day_of_week, is_weekend                                     │ │
+│ │   - time_period (morning/afternoon/evening/night)                     │ │
+│ │                                                                        │ │
+│ │ dim_location:                                                          │ │
+│ │   - location_key                                                      │ │
+│ │   - city, state, zip                                                  │ │
+│ │   - lat, long                                                         │ │
+│ │   - city_pop                                                          │ │
+│ │   - state_fraud_rate (aggregated)                                     │ │
+│ └───────────────────────────────────────────────────────────────────────┘ │
+│                                                                            │
+│ ┌───────────────────────────────────────────────────────────────────────┐ │
+│ │ AGGREGATE TABLES (for Chatbot Analytics)                              │ │
+│ ├───────────────────────────────────────────────────────────────────────┤ │
+│ │ fraud_by_state:                                                        │ │
+│ │   - state, total_transactions, fraud_count, fraud_rate               │ │
+│ │                                                                        │ │
+│ │ fraud_by_merchant:                                                     │ │
+│ │   - merchant, category, total_trans, fraud_count, fraud_rate         │ │
+│ │                                                                        │ │
+│ │ fraud_by_hour:                                                         │ │
+│ │   - hour, total_transactions, fraud_count, fraud_rate                │ │
+│ │                                                                        │ │
+│ │ fraud_by_category:                                                     │ │
+│ │   - category, total_transactions, fraud_count, fraud_rate            │ │
+│ └───────────────────────────────────────────────────────────────────────┘ │
+│                                                                            │
+│ Format: Delta Lake + Trino-queryable views                                │
+│ Update: Daily 4h sáng (sau Silver layer update)                           │
+│ Query Engine: Trino (distributed SQL)                                     │
+│ Consumer: Chatbot Agent (QueryDatabase tool), Metabase dashboards         │
+└────────────────────────────────────────────────────────────────────────────┘
+
+
+TỔNG KẾT FEATURES QUA CÁC TẦNG:
+================================
+PostgreSQL:    24 columns (raw transaction data)
+                ↓
+Kafka:         24 columns (CDC events)
+                ↓
+Bronze:        27 columns (24 raw + 3 metadata)
+                ↓
+Silver:        46 columns (27 Bronze + 15 engineered features + 4 partition)
+                ↓
+Gold:          20+ columns (fact) + 4 dimension tables + aggregate views
+
+
+LABEL (TARGET VARIABLE):
+========================
+- Column: is_fraud
+- Type: SMALLINT (0 or 1)
+- Source: Ground truth từ Sparkov dataset
+- Values:
+  * 0 = Normal transaction (legitimate)
+  * 1 = Fraud transaction
+- Distribution:
+  * Original: 287K normal, 8K fraud (35:1 imbalance)
+  * After balancing: 8K normal, 8K fraud (1:1 ratio for training)
+
+
+================================================================================
+                    PHẦN 2: MACHINE LEARNING PIPELINE
+================================================================================
+
+Q2: Model sử dụng RandomForest hay Logistic Regression? Giải thích fraud_probability tính như thế nào?
+-------------------------------------------------------------------------------------------------------
+ĐÁP:
+
+Hệ thống train 2 models nhưng CHỌN RANDOMFOREST làm Production model:
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│ MODEL 1: RandomForestClassifier (PRODUCTION - Default)                     │
+├────────────────────────────────────────────────────────────────────────────┤
+│ MLflow Name: sklearn_fraud_randomforest                                    │
+│ Stage: Production                                                           │
+│                                                                            │
+│ Hyperparameters:                                                           │
+│   - n_estimators: 200 trees                                                │
+│   - max_depth: 30 levels                                                   │
+│   - min_samples_split: 2                                                   │
+│   - random_state: 42                                                       │
+│   - n_jobs: -1 (use all CPU cores)                                        │
+│                                                                            │
+│ Performance:                                                               │
+│   - Accuracy:  0.928 (92.8%)                                               │
+│   - Precision: 0.95  (95% khi nói fraud là đúng fraud)                    │
+│   - Recall:    0.88  (88% fraud được phát hiện)                           │
+│   - F1-Score:  0.91  (harmonic mean của precision & recall)               │
+│   - AUC-ROC:   0.984 (98.4% khả năng phân biệt fraud/normal)              │
+│                                                                            │
+│ Training Data:                                                             │
+│   - 287,301 transactions (after undersampling 1:1)                        │
+│   - 15 features (engineered from Silver layer)                            │
+│   - 80/20 train-test split                                                │
+└────────────────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│ MODEL 2: LogisticRegression (ALTERNATIVE - Staging)                       │
+├────────────────────────────────────────────────────────────────────────────┤
+│ MLflow Name: sklearn_fraud_logistic                                        │
+│ Stage: Staging (không dùng mặc định)                                       │
+│                                                                            │
+│ Hyperparameters:                                                           │
+│   - penalty: 'l2' (L2 regularization)                                     │
+│   - C: 1.0 (inverse regularization strength)                              │
+│   - max_iter: 1000                                                         │
+│   - solver: 'lbfgs'                                                        │
+│                                                                            │
+│ Performance:                                                               │
+│   - Accuracy:  ~0.85 (85%)                                                 │
+│   - AUC-ROC:   ~0.92 (92%)                                                 │
+│                                                                            │
+│ Lý do KHÔNG chọn làm Production:                                          │
+│   - Performance thấp hơn RandomForest                                      │
+│   - Fraud detection cần recall cao (không bỏ sót)                         │
+│   - RandomForest handle non-linear patterns tốt hơn                       │
+└────────────────────────────────────────────────────────────────────────────┘
+
+
+CÁCH TÍNH FRAUD_PROBABILITY:
+=============================
+
+RandomForest predict_proba() workflow:
+
+Step 1: Input Features (15 dimensions)
+---------------------------------------
+X = [
+    amt,              # 1200.0
+    log_amount,       # 7.09
+    amount_bin,       # 5
+    is_zero_amount,   # 0
+    is_high_amount,   # 1
+    distance_km,      # 150.0
+    is_distant_trans, # 1
+    age,              # 35
+    gender_encoded,   # 0 (Male)
+    hour,             # 2 (2h sáng)
+    day_of_week,      # 3 (Thursday)
+    is_weekend,       # 0
+    is_late_night,    # 1
+    hour_sin,         # 0.5
+    hour_cos          # -0.866
+]
+
+Step 2: 200 Trees Vote
+-----------------------
+Model có 200 cây quyết định (decision trees).
+Mỗi cây độc lập phân loại giao dịch:
+
+Tree 1:  FRAUD (1)     ← Vote cho FRAUD
+Tree 2:  FRAUD (1)     ← Vote cho FRAUD
+Tree 3:  NORMAL (0)    ← Vote cho NORMAL
+Tree 4:  FRAUD (1)     ← Vote cho FRAUD
+...
+Tree 198: FRAUD (1)
+Tree 199: FRAUD (1)
+Tree 200: NORMAL (0)
+
+Ví dụ kết quả: 170 trees vote FRAUD, 30 trees vote NORMAL
+
+Step 3: Calculate Probability
+------------------------------
+fraud_probability = (số cây vote FRAUD) / (tổng số cây)
+                  = 170 / 200
+                  = 0.85
+                  = 85%
+
+Step 4: Thresholds & Risk Levels
+---------------------------------
+if fraud_probability > 0.7:
+    risk_level = "HIGH"       # 🔴 Cần hành động ngay
+    is_fraud_predicted = 1
+    
+elif fraud_probability > 0.5:
+    risk_level = "MEDIUM"     # 🟡 Cảnh báo, theo dõi
+    is_fraud_predicted = 1
+    
+else:
+    risk_level = "LOW"        # 🟢 An toàn
+    is_fraud_predicted = 0
+
+
+CÁCH HIỂU TỶ LỆ PHẦN TRĂM:
+===========================
+
+fraud_probability = 85% nghĩa là:
+- 85% cây trong forest nghĩ giao dịch là FRAUD
+- Model tự tin 85% đây là gian lận
+- Xác suất giao dịch là fraud = 0.85
+
+Ví dụ minh họa:
+---------------
+1. Giao dịch $50 lúc 2h chiều, gần nhà (10km):
+   → 20/200 cây vote FRAUD = 10% probability
+   → Risk: LOW, is_fraud_predicted = 0
+
+2. Giao dịch $850 lúc 2h sáng, xa 150km:
+   → 125/200 cây vote FRAUD = 62.5% probability
+   → Risk: MEDIUM, is_fraud_predicted = 1
+
+3. Giao dịch $2500 lúc 3h sáng, xa 300km:
+   → 185/200 cây vote FRAUD = 92.5% probability
+   → Risk: HIGH, is_fraud_predicted = 1
+
+
+TẠI SAO DÙNG RANDOMFOREST THAY VÌ LOGISTIC REGRESSION?
+=======================================================
+
+1. Non-linear Patterns:
+   - Fraud có patterns phức tạp (không tuyến tính)
+   - RandomForest handle tốt interactions giữa features
+     Ví dụ: (amt > 1000) AND (hour < 6) AND (distance > 100)
+   - Logistic Regression chỉ tốt với linear relationships
+
+2. Feature Importance:
+   - RandomForest cho biết feature nào quan trọng nhất
+   - Top features: amt (25%), distance_km (18%), is_late_night (12%)
+
+3. Robustness:
+   - RandomForest ít bị overfitting (ensemble của 200 trees)
+   - Xử lý outliers tốt hơn
+
+4. Interpretability:
+   - predict_proba() dễ giải thích: "85% cây nghĩ là fraud"
+   - Logistic regression: sigmoid(z) khó giải thích cho non-tech users
+
+5. Performance:
+   - RandomForest: AUC 98.4%, Accuracy 92.8%
+   - Logistic:     AUC 92%,   Accuracy 85%
+
+
+CODE IMPLEMENTATION (FastAPI):
+===============================
+
+```python
+# services/fraud-detection-api/app/main.py
+
+# Predict endpoint
+is_fraud = int(loaded_model.predict(X)[0])        # 0 or 1
+proba = loaded_model.predict_proba(X)[0]          # [P(normal), P(fraud)]
+fraud_probability = float(proba[1])               # Get P(fraud)
+
+# Risk classification
+if fraud_probability > 0.7:
+    risk_level = "HIGH"
+elif fraud_probability > 0.5:
+    risk_level = "MEDIUM"
+else:
+    risk_level = "LOW"
+
+return {
+    "is_fraud_predicted": is_fraud,
+    "fraud_probability": fraud_probability,
+    "risk_level": risk_level,
+    "model_version": "sklearn_fraud_randomforest_v3"
+}
+```
+
+
+================================================================================
+                    PHẦN 3: FEATURES & LABELS CHI TIẾT
+================================================================================
+
+Q3: Có bao nhiêu features? Input features và output features là gì?
+---------------------------------------------------------------------
+ĐÁP:
+
+TỔNG QUAN FEATURES:
+===================
+
+┌──────────────────────┬──────────┬────────────────────────────────────────┐
+│ Layer                │ Columns  │ Purpose                                │
+├──────────────────────┼──────────┼────────────────────────────────────────┤
+│ PostgreSQL (Raw)     │ 24       │ Source data từ Sparkov dataset         │
+│ Bronze (Streaming)   │ 27       │ Raw + metadata (ingestion_time, etc)   │
+│ Silver (Engineered)  │ 46       │ Raw + 15 engineered + 4 partition      │
+│ Gold (Business)      │ 20+      │ Fact table + dimensions                │
+│ ML Model Input       │ 15       │ Selected features for training         │
+│ ML Model Output      │ 3        │ Prediction results                     │
+└──────────────────────┴──────────┴────────────────────────────────────────┘
+
+
+ML MODEL FEATURES (15 INPUT FEATURES):
+=======================================
+
+Được chọn từ Silver layer để train model:
+
+┌───────────────────────┬────────┬────────────────────────────────────────┐
+│ Feature Name          │ Type   │ Description                            │
+├───────────────────────┼────────┼────────────────────────────────────────┤
+│ AMOUNT FEATURES (5):                                                    │
+├───────────────────────┼────────┼────────────────────────────────────────┤
+│ 1. amt                │ DOUBLE │ Original transaction amount ($)        │
+│ 2. log_amount         │ DOUBLE │ log(1 + amt) - normalized              │
+│ 3. amount_bin         │ INT    │ Binned amount (0-5 risk levels)        │
+│ 4. is_zero_amount     │ INT    │ 1 if amt==0, else 0                    │
+│ 5. is_high_amount     │ INT    │ 1 if amt>500, else 0                   │
+├───────────────────────┼────────┼────────────────────────────────────────┤
+│ GEOGRAPHIC FEATURES (2):                                                │
+├───────────────────────┼────────┼────────────────────────────────────────┤
+│ 6. distance_km        │ DOUBLE │ Haversine distance (customer-merchant) │
+│ 7. is_distant_trans   │ INT    │ 1 if distance>100km, else 0            │
+├───────────────────────┼────────┼────────────────────────────────────────┤
+│ DEMOGRAPHIC FEATURES (2):                                               │
+├───────────────────────┼────────┼────────────────────────────────────────┤
+│ 8. age                │ INT    │ Customer age (calculated from DOB)     │
+│ 9. gender_encoded     │ INT    │ 0=Male, 1=Female                       │
+├───────────────────────┼────────┼────────────────────────────────────────┤
+│ TIME FEATURES (6):                                                      │
+├───────────────────────┼────────┼────────────────────────────────────────┤
+│ 10. hour              │ INT    │ Hour of transaction (0-23)             │
+│ 11. day_of_week       │ INT    │ Day of week (0=Mon, 6=Sun)             │
+│ 12. is_weekend        │ INT    │ 1 if Saturday/Sunday, else 0           │
+│ 13. is_late_night     │ INT    │ 1 if hour<6 or hour>=23, else 0        │
+│ 14. hour_sin          │ DOUBLE │ sin(2π*hour/24) - cyclic encoding      │
+│ 15. hour_cos          │ DOUBLE │ cos(2π*hour/24) - cyclic encoding      │
+└───────────────────────┴────────┴────────────────────────────────────────┘
+
+Feature Vector Example:
+-----------------------
+Transaction: $1200 at 2AM, 150km from home, customer 35 years old Male
+
+X = [
+    1200.0,    # amt
+    7.09,      # log_amount = log(1+1200)
+    5,         # amount_bin (>$1000)
+    0,         # is_zero_amount
+    1,         # is_high_amount (>$500)
+    150.0,     # distance_km
+    1,         # is_distant_transaction (>100km)
+    35,        # age
+    0,         # gender_encoded (Male=0)
+    2,         # hour (2AM)
+    3,         # day_of_week (Thursday)
+    0,         # is_weekend (no)
+    1,         # is_late_night (2AM < 6)
+    0.5,       # hour_sin
+    -0.866     # hour_cos
+]
+
+
+LABEL (TARGET VARIABLE):
+========================
+- Column: is_fraud
+- Type: SMALLINT (0 or 1)
+- Values:
+  * 0 = Normal (legitimate transaction)
+  * 1 = Fraud
+- Distribution (training set):
+  * Before balancing: 35:1 (normal:fraud)
+  * After undersampling: 1:1 (balanced for training)
+
+
+MODEL OUTPUT (3 VALUES):
+========================
+
+┌────────────────────────┬────────┬─────────────────────────────────────┐
+│ Output Field           │ Type   │ Description                         │
+├────────────────────────┼────────┼─────────────────────────────────────┤
+│ 1. is_fraud_predicted  │ INT    │ 0 (Normal) or 1 (Fraud)             │
+│                        │        │ Threshold: > 0.5 probability        │
+├────────────────────────┼────────┼─────────────────────────────────────┤
+│ 2. fraud_probability   │ FLOAT  │ 0.0 to 1.0 (0% to 100%)             │
+│                        │        │ = votes_fraud / 200 trees           │
+├────────────────────────┼────────┼─────────────────────────────────────┤
+│ 3. risk_level          │ STRING │ "LOW"    if prob < 0.5              │
+│                        │        │ "MEDIUM" if 0.5 <= prob < 0.7       │
+│                        │        │ "HIGH"   if prob >= 0.7             │
+└────────────────────────┴────────┴─────────────────────────────────────┘
+
+Example Outputs:
+----------------
+1. Normal Transaction ($50, 2PM, 5km):
+   {
+     "is_fraud_predicted": 0,
+     "fraud_probability": 0.15,
+     "risk_level": "LOW"
+   }
+
+2. Suspicious Transaction ($850, 2AM, 150km):
+   {
+     "is_fraud_predicted": 1,
+     "fraud_probability": 0.625,
+     "risk_level": "MEDIUM"
+   }
+
+3. High-Risk Transaction ($2500, 3AM, 300km):
+   {
+     "is_fraud_predicted": 1,
+     "fraud_probability": 0.925,
+     "risk_level": "HIGH"
+   }
+
+
+TẠI SAO CHỈ CHỌN 15 FEATURES TỪ 46 COLUMNS?
+============================================
+
+1. Feature Selection Strategy:
+   - Loại bỏ raw strings (merchant, category) - không numeric
+   - Loại bỏ IDs (trans_num, cc_num) - không có predictive power
+   - Loại bỏ location raw (lat, long) - đã có distance_km
+   - Chỉ giữ engineered features có high correlation với fraud
+
+2. Curse of Dimensionality:
+   - Quá nhiều features → overfitting
+   - 15 features đủ để model học patterns mà không bị noise
+
+3. Feature Importance Analysis:
+   - Top 5 features chiếm 70% importance:
+     * amt (25%)
+     * distance_km (18%)
+     * log_amount (15%)
+     * is_late_night (12%)
+     * amount_bin (10%)
+
+4. Computational Efficiency:
+   - Ít features → train nhanh hơn
+   - Real-time prediction < 100ms
+
+
+================================================================================
+                    PHẦN 4: CHATBOT TARGET USERS
+================================================================================
+
+Q4: Chatbot này cho ai dùng? Giải thích với context bài của tôi.
+-----------------------------------------------------------------
+ĐÁP:
+
+CHATBOT ĐƯỢC THIẾT KẾ CHO 2 ĐỐI TƯỢNG CHÍNH:
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│ ĐỐI TƯỢNG 1: FRAUD ANALYSTS (Chuyên viên phân tích gian lận)              │
+├────────────────────────────────────────────────────────────────────────────┤
+│ VAI TRÒ:                                                                   │
+│   - Điều tra các giao dịch nghi ngờ                                       │
+│   - Xác minh fraud alerts từ real-time system                             │
+│   - Phân tích patterns và trends gian lận                                 │
+│   - Quyết định block/approve các giao dịch high-risk                      │
+│                                                                            │
+│ CÔNG VIỆC HÀNG NGÀY:                                                       │
+│   08:00 - Check Slack alerts từ đêm qua                                   │
+│          → "🚨 10 HIGH RISK transactions detected"                         │
+│                                                                            │
+│   08:15 - Mở Chatbot, hỏi:                                                │
+│          "Cho tôi danh sách 10 giao dịch fraud rate cao nhất hôm qua"    │
+│          → Chatbot query Gold layer → Trả về table + insights            │
+│                                                                            │
+│   09:00 - Điều tra case cụ thể:                                           │
+│          User: "Dự đoán giao dịch $2500 lúc 3h sáng từ California"       │
+│          Bot:  [PredictFraud] → "FRAUD 92%, HIGH RISK"                    │
+│          Bot:  [QueryDatabase] → "CA fraud rate = 8.2%"                   │
+│          Bot:  💡 "Giao dịch RẤT NGUY HIỂM - khuyến nghị từ chối"        │
+│                                                                            │
+│   10:00 - Phân tích merchant:                                              │
+│          "Merchant XYZ có fraud rate bao nhiêu?"                          │
+│          → Bot: "XYZ có fraud rate 15.2% (gấp 3 lần trung bình 5%)"      │
+│                                                                            │
+│   11:00 - So sánh patterns:                                                │
+│          "So sánh fraud rate tuần này với tuần trước"                     │
+│          → Bot trả về trends + visualization insights                     │
+│                                                                            │
+│ LỢI ÍCH:                                                                   │
+│   ✅ Không cần biết SQL → Chat tiếng Việt tự nhiên                        │
+│   ✅ Kết quả real-time (<2s) từ Delta Lake                                │
+│   ✅ AI explain insights → Hiểu TẠI SAO fraud thay vì chỉ con số          │
+│   ✅ Kết hợp data + ML prediction trong 1 conversation                    │
+│   ✅ Lưu conversation history → Review lại cases                          │
+│                                                                            │
+│ USE CASES CỤ THỂ:                                                          │
+│   1. Alert Investigation:                                                  │
+│      - Slack alert: "Transaction abc123 - HIGH RISK"                      │
+│      - Analyst hỏi chatbot: "Thông tin giao dịch abc123"                 │
+│      - Bot trả về: Full context + prediction + explanation               │
+│                                                                            │
+│   2. Pattern Discovery:                                                    │
+│      - "Merchant nào ở California có fraud rate >10%?"                    │
+│      - "Giờ nào hay xảy ra fraud nhất?"                                  │
+│      - "Fraud rate theo category"                                         │
+│                                                                            │
+│   3. Risk Assessment:                                                      │
+│      - Customer gọi phone: "Tôi vừa thanh toán $1200 lúc 2h sáng"        │
+│      - Analyst hỏi bot: "Dự đoán giao dịch $1200 lúc 2AM"                │
+│      - Bot: "65% fraud probability - cần verify OTP"                      │
+│                                                                            │
+│   4. Comparative Analysis:                                                 │
+│      - "So sánh fraud rate: CA vs TX vs NY"                               │
+│      - "Xu hướng fraud 30 ngày qua"                                       │
+│      - "Impact của late-night transactions"                               │
+└────────────────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│ ĐỐI TƯỢNG 2: DATA ANALYSTS (Chuyên viên phân tích dữ liệu)                │
+├────────────────────────────────────────────────────────────────────────────┤
+│ VAI TRÒ:                                                                   │
+│   - Tạo reports định kỳ cho management                                    │
+│   - Phân tích business metrics và KPIs                                     │
+│   - Tìm insights để improve fraud detection system                        │
+│   - Validate model performance và suggest improvements                     │
+│                                                                            │
+│ CÔNG VIỆC HÀNG TUẦN:                                                       │
+│   Monday Morning - Weekly Report:                                          │
+│   ────────────────────────────────────                                    │
+│   User: "Tóm tắt fraud metrics tuần qua"                                  │
+│   Bot:  [Query Gold layer aggregates]                                     │
+│         → Total transactions: 45,230                                       │
+│         → Fraud detected: 2,315 (5.1%)                                    │
+│         → TOP risk states: AK (14.3%), CA (8.2%), TX (7.8%)              │
+│         → Most dangerous hour: 2-4AM (18% fraud rate)                     │
+│                                                                            │
+│   Tuesday - Merchant Analysis:                                             │
+│   ────────────────────────────                                            │
+│   User: "Top 10 merchants có fraud rate cao nhất"                         │
+│   Bot:  [QueryDatabase] → Table + Insights:                               │
+│         1. ABC Corp - 15.2% (đề xuất blacklist)                           │
+│         2. XYZ Store - 12.8%                                              │
+│         ...                                                                │
+│                                                                            │
+│   Wednesday - Model Performance:                                           │
+│   ─────────────────────────────────                                       │
+│   User: "Thông tin model hiện tại"                                        │
+│   Bot:  [GetModelInfo]                                                    │
+│         → Model: sklearn_fraud_randomforest v3                            │
+│         → Accuracy: 92.8%, AUC: 98.4%                                     │
+│         → Trained on: 2025-12-10                                          │
+│         → 15 features used                                                │
+│                                                                            │
+│   Thursday - Trend Analysis:                                               │
+│   ──────────────────────────                                              │
+│   User: "Xu hướng fraud 90 ngày qua"                                      │
+│   Bot:  [Complex SQL aggregation] → Line chart insights                   │
+│         💡 "Fraud tăng 0.8% trong Q4, đặc biệt cao vào holiday season"   │
+│                                                                            │
+│   Friday - Ad-hoc Queries:                                                 │
+│   ──────────────────────────                                              │
+│   Boss hỏi: "Fraud rate của category shopping_net vs gas_transport?"     │
+│   Analyst dùng chatbot thay vì viết SQL:                                  │
+│   → Bot trả lời ngay với comparison table + insights                      │
+│                                                                            │
+│ LỢI ÍCH:                                                                   │
+│   ✅ Self-service analytics → Không cần Data Engineer viết query          │
+│   ✅ Natural language → Không cần nhớ schema, table names                 │
+│   ✅ AI-generated insights → Không chỉ data, còn có explanation           │
+│   ✅ Fast iteration → Test hypotheses nhanh (không cần viết Python)       │
+│   ✅ Reproducible → Session history → Share với team                      │
+│                                                                            │
+│ USE CASES CỤ THỂ:                                                          │
+│   1. Business Intelligence:                                                │
+│      - "Revenue loss từ fraud transactions tháng này?"                    │
+│      - "Fraud rate theo customer age groups"                              │
+│      - "Impact của fraud detection system lên false positives"            │
+│                                                                            │
+│   2. Model Validation:                                                     │
+│      - "So sánh prediction accuracy của model v2 vs v3"                   │
+│      - "Precision-Recall trade-off hiện tại"                              │
+│      - "Feature importance có thay đổi không?"                            │
+│                                                                            │
+│   3. A/B Testing:                                                          │
+│      - "Nếu tăng threshold từ 0.5 lên 0.7 thì ảnh hưởng gì?"            │
+│      - "Test prediction trên sample mới"                                  │
+│                                                                            │
+│   4. Root Cause Analysis:                                                  │
+│      - "Tại sao fraud rate tăng đột biến tuần trước?"                    │
+│      - "Merchant nào drive fraud spike?"                                  │
+│      - "Có correlation giữa distance và fraud không?"                     │
+└────────────────────────────────────────────────────────────────────────────┘
+
+
+TẠI SAO CHATBOT PHÙ HỢP VỚI 2 ĐỐI TƯỢNG NÀY?
+=============================================
+
+1. FRAUD ANALYSTS:
+   ✅ Real-time decision making
+      - Alert investigation trong 2-3 phút
+      - Không đợi Data team viết query
+   
+   ✅ Technical barrier thấp
+      - Không cần biết SQL, Python
+      - Chat tiếng Việt tự nhiên
+   
+   ✅ Context-aware
+      - Agent nhớ conversation history
+      - Có thể hỏi follow-up: "Thông tin về bang đó?"
+   
+   ✅ Actionable insights
+      - Không chỉ số liệu, còn có recommendations
+      - "Khuyến nghị từ chối giao dịch" hoặc "Cần verify OTP"
+
+2. DATA ANALYSTS:
+   ✅ Self-service analytics
+      - Không phụ thuộc vào Data Engineers
+      - Query phức tạp trong vài giây
+   
+   ✅ Exploratory Analysis
+      - Test hypotheses nhanh
+      - Iterate queries dễ dàng
+   
+   ✅ Natural language interface
+      - Không cần nhớ schema Delta Lake
+      - Không cần viết PySpark/SQL
+   
+   ✅ AI-powered insights
+      - Gemini LLM generate explanations
+      - Tự động phát hiện patterns
+
+
+SO SÁNH VỚI ALTERNATIVES:
+==========================
+
+┌──────────────┬─────────┬──────────┬──────────┬─────────────┐
+│ Method       │ Chatbot │ Metabase │ SQL      │ Python      │
+├──────────────┼─────────┼──────────┼──────────┼─────────────┤
+│ Tiếng Việt   │ ✅✅✅   │ ❌       │ ❌       │ ❌          │
+│ Real-time    │ ✅✅     │ ✅✅      │ ✅✅      │ ✅          │
+│ ML Predict   │ ✅✅✅   │ ❌       │ ❌       │ ✅✅✅       │
+│ AI Insights  │ ✅✅✅   │ ❌       │ ❌       │ ❌          │
+│ Easy to use  │ ✅✅✅   │ ✅✅      │ ❌       │ ❌          │
+│ No training  │ ✅✅✅   │ ✅       │ ❌❌      │ ❌❌         │
+└──────────────┴─────────┴──────────┴──────────┴─────────────┘
+
+
+BUSINESS VALUE:
+===============
+
+1. Giảm Response Time:
+   - Alert → Action: 2-3 phút (thay vì 30-60 phút)
+   - Self-service → Không đợi Data team
+
+2. Tăng Fraud Detection Rate:
+   - Analysts làm việc hiệu quả hơn
+   - Có tools để investigate nhanh
+
+3. Reduce False Positives:
+   - Verify prediction với historical data
+   - Context-aware decision making
+
+4. Knowledge Democratization:
+   - Non-technical users access Delta Lake
+   - No SQL training required
+
+
+================================================================================
+                            KẾT LUẬN
+================================================================================
+
+Hệ thống Real-Time Fraud Detection Lakehouse được thiết kế với:
+
+1. DATA ARCHITECTURE:
+   - 5 layers: PostgreSQL → Kafka → Bronze → Silver → Gold
+   - 24 raw columns → 46 engineered columns → 15 ML features
+   - Delta Lake format với ACID transactions
+
+2. ML PIPELINE:
+   - RandomForest (Production): 200 trees, AUC 98.4%
+   - Logistic Regression (Staging): Alternative model
+   - fraud_probability = votes_fraud / 200 trees
+   - Risk levels: LOW/MEDIUM/HIGH based on thresholds
+
+3. FEATURES:
+   - 15 input features: amount (5) + geographic (2) + demographic (2) + time (6)
+   - 1 label: is_fraud (0/1)
+   - 3 output values: is_fraud_predicted, fraud_probability, risk_level
+
+4. CHATBOT:
+   - Target users: Fraud Analysts + Data Analysts
+   - LangChain ReAct Agent với 3 tools
+   - Tiếng Việt, real-time, AI-powered insights
+   - Self-service analytics không cần SQL
+
+
+NGƯỜI LÀM: [Tên sinh viên]
+NGÀY: 13/12/2025
+
+================================================================================
+                              HẾT
+================================================================================

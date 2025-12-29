@@ -171,13 +171,80 @@ def render_examples():
     """Câu hỏi mẫu"""
     with st.expander("💡 Examples", expanded=False):
         st.markdown("""
-**⚡ Analytics:**
-- Top 5 bang có fraud rate cao nhất
-- Merchant nguy hiểm nhất  
-- Fraud rate theo giờ trong ngày
+### ⚡ **Phân tích dữ liệu**
 
-**🔮 Prediction:**
-- Dự đoán giao dịch $850 lúc 2h sáng
+**Về Fraud Rate:**
+- Bang nào có tỉ lệ gian lận cao nhất?
+- Cho tôi xem top 5 bang nguy hiểm nhất
+- So sánh fraud rate giữa các bang
+- Bang nào an toàn nhất?
+
+**Về Merchants:**
+- Merchant nào nguy hiểm nhất?
+- Liệt kê 10 merchant có fraud rate >10%
+- Phân tích merchant có nhiều giao dịch lạ
+- Walmart có an toàn không?
+- Merchant grocery nào đáng tin cậy?
+
+**Về Thời gian:**
+- Giờ nào hay có gian lận nhất?
+- Fraud rate theo giờ trong ngày
+- Cuối tuần có nhiều fraud hơn không?
+- Đêm khuya (2-4h sáng) nguy hiểm như thế nào?
+- Phân tích xu hướng theo giờ
+
+**Về Categories:**
+- Category nào bị fraud nhiều nhất?
+- Shopping online có rủi ro không?
+- Gas station có hay bị gian lận không?
+
+**Về Xu hướng:**
+- Xu hướng 7 ngày qua
+- Có pattern nào lặp lại không?
+- Fraud rate trung bình là bao nhiêu?
+
+---
+
+### 🔮 **Dự đoán giao dịch**
+
+**Simple:**
+- Dự đoán giao dịch 850 đô
+- Check giao dịch $1200
+- Giao dịch $50 có an toàn không?
+- Thanh toán $300 có rủi ro không?
+
+**Với context:**
+- Giao dịch $850 lúc 2h sáng nguy hiểm không?
 - Check giao dịch $1200 xa 150km
-- Thông tin model
+- Đi mua hàng $500 lúc 3h sáng
+- Mua gas $80 lúc 11h trưa
+
+**Detailed:**
+- Khách 45 tuổi, giao dịch $3000 lúc 1h sáng, xa 200km
+- Giao dịch gas_transport $150, khách hàng 60 tuổi
+- Nữ 30 tuổi, mua shopping_net $1500, xa nhà 50km
+
+**Comparison:**
+- So sánh giao dịch 100 đô và 1000 đô
+- Nếu tôi mua hàng $500 lúc 2h sáng vs 2h chiều thì sao?
+
+---
+
+### ℹ️ **Thông tin hệ thống**
+
+- Model hiện tại là gì?
+- Cho tôi xem thông tin model
+- Độ chính xác của model bao nhiêu?
+- Model được train khi nào?
+- Có bao nhiêu features được dùng?
+- AUC score là gì?
+
+---
+
+### ✨ **Câu hỏi phức hợp**
+
+- Giao dịch $1500 lúc 3h sáng có rủi ro không? So sánh với fraud rate trung bình.
+- Top 3 bang có fraud rate cao và dự đoán giao dịch $800 từ bang đó
+- Liệt kê merchant grocery có fraud >5% và check giao dịch $200 tại đó
+- Phân tích xu hướng fraud tuần này và dự đoán $1000 lúc 2h sáng
         """)
